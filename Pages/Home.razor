@@ -170,6 +170,7 @@
                              RowsPerPage="50"
                              Class="diff-grid">
                     <Columns>
+                        <HierarchyColumn T="DiffRecord" EnableHeaderToggle="false" />
                         <TemplateColumn T="DiffRecord" Title="カテゴリ" SortBy="@(row => row.Category)">
                             <CellTemplate>@CategoryLabel(context.Item.Category)</CellTemplate>
                         </TemplateColumn>
@@ -183,10 +184,32 @@
                         <PropertyColumn T="DiffRecord" TProperty="string" Property="row => row.SheetName" Title="シート" />
                         <PropertyColumn T="DiffRecord" TProperty="string" Property="row => row.Address" Title="アドレス" />
                         <PropertyColumn T="DiffRecord" TProperty="string" Property="row => row.Item" Title="項目" />
-                        <PropertyColumn T="DiffRecord" TProperty="string" Property="row => row.SourceValue" Title="比較元" />
-                        <PropertyColumn T="DiffRecord" TProperty="string" Property="row => row.TargetValue" Title="比較先" />
+                        <TemplateColumn T="DiffRecord" Title="比較元" SortBy="@(row => row.SourceValue)">
+                            <CellTemplate>@RenderValueCell(context.Item, isSource: true)</CellTemplate>
+                        </TemplateColumn>
+                        <TemplateColumn T="DiffRecord" Title="比較先" SortBy="@(row => row.TargetValue)">
+                            <CellTemplate>@RenderValueCell(context.Item, isSource: false)</CellTemplate>
+                        </TemplateColumn>
                         <PropertyColumn T="DiffRecord" TProperty="string" Property="row => row.Detail" Title="詳細" />
                     </Columns>
+                    <ChildRowContent>
+                        <div class="diff-detail">
+                            <div>
+                                <span>差分詳細</span>
+                                <p>@context.Item.Detail</p>
+                            </div>
+                            <div class="diff-detail-grid">
+                                <div>
+                                    <strong>比較元</strong>
+                                    @RenderPreviewBlock(context.Item, isSource: true)
+                                </div>
+                                <div>
+                                    <strong>比較先</strong>
+                                    @RenderPreviewBlock(context.Item, isSource: false)
+                                </div>
+                            </div>
+                        </div>
+                    </ChildRowContent>
                     <PagerContent>
                         <MudDataGridPager T="DiffRecord" PageSizeOptions="@(new[] { 50, 100, 250 })" />
                     </PagerContent>
@@ -373,6 +396,52 @@
     private bool Contains(string value) =>
         value.Contains(_keyword, StringComparison.OrdinalIgnoreCase);
 
+    private RenderFragment RenderValueCell(DiffRecord record, bool isSource) =>
+        @<div class="value-cell">
+            @if (record.Category == DiffCategory.Formatting)
+            {
+                @RenderStylePreview(isSource ? record.SourceValue : record.TargetValue)
+            }
+            <span>@(isSource ? record.SourceValue : record.TargetValue)</span>
+        </div>;
+
+    private RenderFragment RenderPreviewBlock(DiffRecord record, bool isSource)
+    {
+        var preview = isSource ? record.SourcePreview : record.TargetPreview;
+        var value = isSource ? record.SourceValue : record.TargetValue;
+
+        return @<div class="preview-block">
+            @if (record.Category == DiffCategory.Formatting)
+            {
+                @RenderStylePreview(value)
+            }
+            @if (!string.IsNullOrEmpty(preview))
+            {
+                <pre>@preview</pre>
+            }
+            else if (!string.IsNullOrEmpty(value))
+            {
+                <pre>@value</pre>
+            }
+            else
+            {
+                <em>なし</em>
+            }
+        </div>;
+    }
+
+    private RenderFragment RenderStylePreview(string styleSignature) =>
+        @<div class="style-preview">
+            @{
+                var style = ParseStyleSignature(styleSignature);
+                var bgColor = ToCssColor(style.Background);
+                var fgColor = ToCssColor(style.Foreground);
+            }
+            <span class="swatch @(bgColor is null ? "swatch-empty" : string.Empty)" style="background:@(bgColor ?? "transparent")"></span>
+            <span class="swatch @(fgColor is null ? "swatch-empty" : string.Empty)" style="background:@(fgColor ?? "transparent")"></span>
+            <small>@style.NumberFormat</small>
+        </div>;
+
     private RenderFragment RenderMetadata(FileMetadata? metadata) => builder =>
     {
         if (metadata is null)
@@ -404,6 +473,47 @@
         </MudItem>;
 
     private static string FormatBytes(long bytes) => $"{bytes / 1024d / 1024d:N2} MB";
+
+    private static (string Background, string Foreground, string NumberFormat) ParseStyleSignature(string signature)
+    {
+        var background = string.Empty;
+        var foreground = string.Empty;
+        var numberFormat = string.Empty;
+
+        foreach (var part in signature.Split('|', StringSplitOptions.RemoveEmptyEntries))
+        {
+            if (part.StartsWith("bg:", StringComparison.Ordinal))
+            {
+                background = part[3..];
+            }
+            else if (part.StartsWith("fg:", StringComparison.Ordinal))
+            {
+                foreground = part[3..];
+            }
+            else if (part.StartsWith("num:", StringComparison.Ordinal))
+            {
+                numberFormat = part[4..];
+            }
+        }
+
+        return (background, foreground, string.IsNullOrWhiteSpace(numberFormat) ? "標準" : numberFormat);
+    }
+
+    private static string? ToCssColor(string openXmlColor)
+    {
+        if (!openXmlColor.StartsWith("rgb:", StringComparison.OrdinalIgnoreCase))
+        {
+            return null;
+        }
+
+        var hex = openXmlColor[4..];
+        if (hex.Length == 8)
+        {
+            hex = hex[2..];
+        }
+
+        return hex.Length == 6 ? $"#{hex}" : null;
+    }
 
     private static string CategoryLabel(DiffCategory category) => category switch
     {

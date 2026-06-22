@@ -41,7 +41,9 @@ public sealed record DiffRecord(
     string Item,
     string SourceValue,
     string TargetValue,
-    string Detail);
+    string Detail,
+    string SourcePreview = "",
+    string TargetPreview = "");
 
 public sealed record DiffSummary(
     int StructureCount,
@@ -75,6 +77,7 @@ internal sealed record SheetSnapshot(
     string State,
     IReadOnlyDictionary<string, CellSnapshot> CellsByAddress,
     IReadOnlyDictionary<uint, string> RowSignatures,
+    IReadOnlyDictionary<uint, string> ColumnSignatures,
     IReadOnlyDictionary<uint, IReadOnlyDictionary<uint, CellSnapshot>> CellsByRow,
     IReadOnlyList<string> HiddenRows,
     IReadOnlyList<string> HiddenColumns,

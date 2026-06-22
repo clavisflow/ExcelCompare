@@ -232,6 +232,105 @@ h1:focus {
     vertical-align: top;
 }
 
+.value-cell {
+    display: grid;
+    gap: 4px;
+}
+
+.style-preview {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    min-width: 0;
+}
+
+.style-preview small {
+    overflow: hidden;
+    color: #64748b;
+    font-size: 0.76rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.swatch {
+    display: inline-block;
+    width: 18px;
+    height: 18px;
+    flex: 0 0 auto;
+    border: 1px solid #94a3b8;
+    border-radius: 4px;
+}
+
+.swatch-empty {
+    background:
+        linear-gradient(45deg, transparent 46%, #cbd5e1 47%, #cbd5e1 53%, transparent 54%),
+        #fff !important;
+}
+
+.diff-detail {
+    display: grid;
+    gap: 12px;
+    border-left: 4px solid #2563eb;
+    padding: 14px 16px;
+    background: #f8fafc;
+}
+
+.diff-detail span {
+    display: block;
+    margin-bottom: 4px;
+    color: #64748b;
+    font-size: 0.78rem;
+    font-weight: 900;
+}
+
+.diff-detail p {
+    margin: 0;
+    color: #334155;
+}
+
+.diff-detail-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+}
+
+.diff-detail-grid > div {
+    min-width: 0;
+    border: 1px solid #d9e0ea;
+    border-radius: 8px;
+    padding: 12px;
+    background: #fff;
+}
+
+.diff-detail-grid strong {
+    display: block;
+    margin-bottom: 8px;
+    color: #111827;
+}
+
+.preview-block {
+    display: grid;
+    gap: 8px;
+}
+
+.preview-block pre {
+    max-height: 260px;
+    margin: 0;
+    overflow: auto;
+    border-radius: 6px;
+    padding: 10px;
+    background: #111827;
+    color: #e5e7eb;
+    font-size: 0.82rem;
+    line-height: 1.55;
+    white-space: pre-wrap;
+}
+
+.preview-block em {
+    color: #94a3b8;
+    font-style: normal;
+}
+
 .mud-button-filled-primary {
     box-shadow: none;
 }
@@ -315,5 +414,9 @@ h1:focus {
 
     .workspace-title h1 {
         font-size: 1.7rem;
+    }
+
+    .diff-detail-grid {
+        grid-template-columns: 1fr;
     }
 }

@@ -15,6 +15,7 @@ public sealed class ExcelDiffService
 
     private const int ShiftLookAhead = 24;
     private const int MaxPerShiftBlock = 250;
+    private const int MaxMacroLineDiffsPerModule = 200;
 
     public async Task<FileMetadata> ReadMetadataAsync(IBrowserFile file)
     {
@@ -227,12 +228,20 @@ public sealed class ExcelDiffService
             pair => BuildRowSignature(pair.Value),
             EqualityComparer<uint>.Default);
 
+        var columnSignatures = cellsByAddress.Values
+            .GroupBy(cell => cell.Column)
+            .ToDictionary(
+                group => group.Key,
+                group => BuildColumnSignature(group),
+                EqualityComparer<uint>.Default);
+
         return new SheetSnapshot(
             sheet.Name?.Value ?? "(名称なし)",
             position,
             sheet.State?.Value.ToString() ?? "Visible",
             cellsByAddress,
             rowSignatures,
+            columnSignatures,
             rows,
             ReadHiddenRows(worksheet),
             ReadHiddenColumns(worksheet),
@@ -424,9 +433,88 @@ public sealed class ExcelDiffService
             CompareStringSets(records, name, "非表示行", left.HiddenRows, right.HiddenRows);
             CompareStringSets(records, name, "非表示列", left.HiddenColumns, right.HiddenColumns);
             CompareStringSets(records, name, "入力規則", left.DataValidations, right.DataValidations);
+            CompareColumnStructure(records, name, left, right);
         }
 
         CompareDefinedNames(source, target, records);
+    }
+
+    private static void CompareColumnStructure(
+        ICollection<DiffRecord> records,
+        string sheetName,
+        SheetSnapshot source,
+        SheetSnapshot target)
+    {
+        var matchedTargets = new HashSet<uint>();
+        foreach (var sourceColumn in source.ColumnSignatures.Keys.Order())
+        {
+            var sourceSignature = source.ColumnSignatures[sourceColumn];
+            if (string.IsNullOrEmpty(sourceSignature))
+            {
+                continue;
+            }
+
+            var sameColumn = target.ColumnSignatures.TryGetValue(sourceColumn, out var targetSignature) &&
+                sourceSignature.Equals(targetSignature, StringComparison.Ordinal);
+            if (sameColumn)
+            {
+                matchedTargets.Add(sourceColumn);
+                continue;
+            }
+
+            var movedTarget = target.ColumnSignatures
+                .Where(pair => !matchedTargets.Contains(pair.Key) && pair.Value.Equals(sourceSignature, StringComparison.Ordinal))
+                .Select(pair => (uint?)pair.Key)
+                .FirstOrDefault();
+
+            if (movedTarget is { } targetColumn)
+            {
+                matchedTargets.Add(targetColumn);
+                records.Add(new(
+                    DiffCategory.Structure,
+                    DiffKind.Changed,
+                    sheetName,
+                    $"{ColumnName(sourceColumn)} -> {ColumnName(targetColumn)}",
+                    "列位置",
+                    ColumnName(sourceColumn),
+                    ColumnName(targetColumn),
+                    "同じ内容の列が別位置へ移動しました。セル比較ではこの列ズレを補正しています。"));
+            }
+            else if (!target.ColumnSignatures.Values.Contains(sourceSignature, StringComparer.Ordinal))
+            {
+                records.Add(new(
+                    DiffCategory.Structure,
+                    DiffKind.Removed,
+                    sheetName,
+                    ColumnName(sourceColumn),
+                    "列",
+                    ColumnName(sourceColumn),
+                    string.Empty,
+                    "比較先で列内容が削除された可能性があります。"));
+            }
+        }
+
+        foreach (var targetColumn in target.ColumnSignatures.Keys.Order())
+        {
+            if (matchedTargets.Contains(targetColumn))
+            {
+                continue;
+            }
+
+            var signature = target.ColumnSignatures[targetColumn];
+            if (!string.IsNullOrEmpty(signature) && !source.ColumnSignatures.Values.Contains(signature, StringComparer.Ordinal))
+            {
+                records.Add(new(
+                    DiffCategory.Structure,
+                    DiffKind.Added,
+                    sheetName,
+                    ColumnName(targetColumn),
+                    "列",
+                    string.Empty,
+                    ColumnName(targetColumn),
+                    "比較先で列内容が追加された可能性があります。"));
+            }
+        }
     }
 
     private static void CompareSheets(
@@ -511,42 +599,135 @@ public sealed class ExcelDiffService
         ComparisonOptions options,
         ICollection<DiffRecord> records)
     {
-        var leftCells = source.CellsByRow[sourceRow];
-        var rightCells = target.CellsByRow[targetRow];
-        var columns = leftCells.Keys.Union(rightCells.Keys).Order();
+        var leftCells = source.CellsByRow[sourceRow].Values.OrderBy(cell => cell.Column).ToList();
+        var rightCells = target.CellsByRow[targetRow].Values.OrderBy(cell => cell.Column).ToList();
+        var i = 0;
+        var j = 0;
 
-        foreach (var column in columns)
+        while (i < leftCells.Count || j < rightCells.Count)
         {
-            var hasLeft = leftCells.TryGetValue(column, out var left);
-            var hasRight = rightCells.TryGetValue(column, out var right);
-            var address = right?.Address ?? left?.Address ?? $"{ColumnName(column)}{targetRow}";
-
-            if (!hasLeft && right is not null && options.IncludeData)
+            if (i >= leftCells.Count)
             {
-                records.Add(new(DiffCategory.Cell, DiffKind.Added, target.Name, address, "セル", string.Empty, right.DataSignature, "セルが追加されました。"));
+                AddCellBlock(records, DiffKind.Added, target.Name, rightCells.Skip(j), target: true, options);
+                break;
+            }
+
+            if (j >= rightCells.Count)
+            {
+                AddCellBlock(records, DiffKind.Removed, source.Name, leftCells.Skip(i), target: false, options);
+                break;
+            }
+
+            var left = leftCells[i];
+            var right = rightCells[j];
+            if (SameCellIdentity(left, right))
+            {
+                CompareAlignedCells(target.Name, left, right, options, records);
+                i++;
+                j++;
                 continue;
             }
 
-            if (!hasRight && left is not null && options.IncludeData)
+            var targetMatch = FindMatchingCell(left, rightCells, j + 1);
+            if (targetMatch >= 0)
             {
-                records.Add(new(DiffCategory.Cell, DiffKind.Removed, source.Name, address, "セル", left.DataSignature, string.Empty, "セルが削除されました。"));
+                AddCellBlock(records, DiffKind.Added, target.Name, rightCells.Skip(j).Take(targetMatch - j), target: true, options);
+                j = targetMatch;
                 continue;
             }
 
-            if (left is null || right is null)
+            var sourceMatch = FindMatchingCell(right, leftCells, i + 1);
+            if (sourceMatch >= 0)
             {
+                AddCellBlock(records, DiffKind.Removed, source.Name, leftCells.Skip(i).Take(sourceMatch - i), target: false, options);
+                i = sourceMatch;
                 continue;
             }
 
-            if (options.IncludeData)
+            CompareAlignedCells(target.Name, left, right, options, records);
+            i++;
+            j++;
+        }
+    }
+
+    private static void CompareAlignedCells(
+        string sheetName,
+        CellSnapshot left,
+        CellSnapshot right,
+        ComparisonOptions options,
+        ICollection<DiffRecord> records)
+    {
+        var address = right.Address;
+        if (options.IncludeData)
+        {
+            AddCellChange(records, sheetName, address, "値", left.Value, right.Value);
+            AddCellChange(records, sheetName, address, "数式", left.Formula, right.Formula);
+        }
+
+        if (options.IncludeFormatting)
+        {
+            AddFormattingChange(records, sheetName, address, left.StyleSignature, right.StyleSignature);
+        }
+    }
+
+    private static bool SameCellIdentity(CellSnapshot left, CellSnapshot right)
+    {
+        if (!string.IsNullOrEmpty(left.DataSignature) || !string.IsNullOrEmpty(right.DataSignature))
+        {
+            return string.Equals(left.DataSignature, right.DataSignature, StringComparison.Ordinal);
+        }
+
+        return string.Equals(left.StyleSignature, right.StyleSignature, StringComparison.Ordinal);
+    }
+
+    private static int FindMatchingCell(CellSnapshot needle, IReadOnlyList<CellSnapshot> cells, int startIndex)
+    {
+        var max = Math.Min(cells.Count, startIndex + ShiftLookAhead);
+        for (var index = startIndex; index < max; index++)
+        {
+            if (SameCellIdentity(needle, cells[index]))
             {
-                AddCellChange(records, target.Name, address, "値", left.Value, right.Value);
-                AddCellChange(records, target.Name, address, "数式", left.Formula, right.Formula);
+                return index;
+            }
+        }
+
+        return -1;
+    }
+
+    private static void AddCellBlock(
+        ICollection<DiffRecord> records,
+        DiffKind kind,
+        string sheet,
+        IEnumerable<CellSnapshot> cells,
+        bool target,
+        ComparisonOptions options)
+    {
+        foreach (var cell in cells)
+        {
+            if (options.IncludeData && !string.IsNullOrEmpty(cell.DataSignature))
+            {
+                records.Add(new(
+                    DiffCategory.Cell,
+                    kind,
+                    sheet,
+                    cell.Address,
+                    "セル",
+                    target ? string.Empty : cell.DataSignature,
+                    target ? cell.DataSignature : string.Empty,
+                    kind == DiffKind.Added ? "列挿入またはセル追加を検出しました。" : "列削除またはセル削除を検出しました。"));
             }
 
-            if (options.IncludeFormatting)
+            if (options.IncludeFormatting && !string.IsNullOrEmpty(cell.StyleSignature))
             {
-                AddFormattingChange(records, target.Name, address, left.StyleSignature, right.StyleSignature);
+                records.Add(new(
+                    DiffCategory.Formatting,
+                    kind,
+                    sheet,
+                    cell.Address,
+                    "書式",
+                    target ? string.Empty : cell.StyleSignature,
+                    target ? cell.StyleSignature : string.Empty,
+                    kind == DiffKind.Added ? "追加セルの書式を検出しました。" : "削除セルの書式を検出しました。"));
             }
         }
     }
@@ -588,12 +769,34 @@ public sealed class ExcelDiffService
 
         foreach (var name in leftModules.Keys.Except(rightModules.Keys, StringComparer.OrdinalIgnoreCase))
         {
-            records.Add(new(DiffCategory.Macro, DiffKind.Removed, string.Empty, string.Empty, name, $"{leftModules[name].LineCount}行", string.Empty, "VBAモジュールが削除されました。"));
+            var module = leftModules[name];
+            records.Add(new(
+                DiffCategory.Macro,
+                DiffKind.Removed,
+                string.Empty,
+                string.Empty,
+                name,
+                $"{module.LineCount}行",
+                string.Empty,
+                "VBAモジュールが削除されました。",
+                PreviewCode(module.SourceText),
+                string.Empty));
         }
 
         foreach (var name in rightModules.Keys.Except(leftModules.Keys, StringComparer.OrdinalIgnoreCase))
         {
-            records.Add(new(DiffCategory.Macro, DiffKind.Added, string.Empty, string.Empty, name, string.Empty, $"{rightModules[name].LineCount}行", "VBAモジュールが追加されました。"));
+            var module = rightModules[name];
+            records.Add(new(
+                DiffCategory.Macro,
+                DiffKind.Added,
+                string.Empty,
+                string.Empty,
+                name,
+                string.Empty,
+                $"{module.LineCount}行",
+                "VBAモジュールが追加されました。",
+                string.Empty,
+                PreviewCode(module.SourceText)));
         }
 
         foreach (var name in leftModules.Keys.Intersect(rightModules.Keys, StringComparer.OrdinalIgnoreCase))
@@ -604,6 +807,7 @@ public sealed class ExcelDiffService
             {
                 var changedLines = CountChangedLines(left.SourceText, right.SourceText);
                 records.Add(new(DiffCategory.Macro, DiffKind.Changed, string.Empty, string.Empty, name, $"{left.LineCount}行", $"{right.LineCount}行", $"コードが変更されました。変更行数目安: {changedLines:N0}行"));
+                AddMacroLineDiffs(records, name, left.SourceText, right.SourceText);
             }
         }
     }
@@ -789,8 +993,23 @@ public sealed class ExcelDiffService
                 continue;
             }
 
-            builder.Append(cell.Column.ToString(CultureInfo.InvariantCulture));
-            builder.Append('=');
+            builder.Append(cell.DataSignature);
+            builder.Append('\u001f');
+        }
+
+        return builder.ToString();
+    }
+
+    private static string BuildColumnSignature(IEnumerable<CellSnapshot> column)
+    {
+        var builder = new StringBuilder();
+        foreach (var cell in column.OrderBy(cell => cell.Row))
+        {
+            if (string.IsNullOrEmpty(cell.DataSignature))
+            {
+                continue;
+            }
+
             builder.Append(cell.DataSignature);
             builder.Append('\u001f');
         }
@@ -874,6 +1093,134 @@ public sealed class ExcelDiffService
         var rightLines = SplitLines(right);
         var common = CountCommonLines(leftLines, rightLines);
         return Math.Max(0, leftLines.Length - common) + Math.Max(0, rightLines.Length - common);
+    }
+
+    private static void AddMacroLineDiffs(
+        ICollection<DiffRecord> records,
+        string moduleName,
+        string sourceText,
+        string targetText)
+    {
+        var sourceLines = SplitLines(sourceText);
+        var targetLines = SplitLines(targetText);
+        var i = 0;
+        var j = 0;
+        var emitted = 0;
+
+        while ((i < sourceLines.Length || j < targetLines.Length) && emitted < MaxMacroLineDiffsPerModule)
+        {
+            if (i < sourceLines.Length &&
+                j < targetLines.Length &&
+                sourceLines[i].Equals(targetLines[j], StringComparison.Ordinal))
+            {
+                i++;
+                j++;
+                continue;
+            }
+
+            if (i + 1 < sourceLines.Length &&
+                j < targetLines.Length &&
+                sourceLines[i + 1].Equals(targetLines[j], StringComparison.Ordinal))
+            {
+                records.Add(MacroLineRecord(moduleName, DiffKind.Removed, i + 1, null, sourceLines[i], string.Empty));
+                i++;
+                emitted++;
+                continue;
+            }
+
+            if (j + 1 < targetLines.Length &&
+                i < sourceLines.Length &&
+                sourceLines[i].Equals(targetLines[j + 1], StringComparison.Ordinal))
+            {
+                records.Add(MacroLineRecord(moduleName, DiffKind.Added, null, j + 1, string.Empty, targetLines[j]));
+                j++;
+                emitted++;
+                continue;
+            }
+
+            if (i < sourceLines.Length && j < targetLines.Length)
+            {
+                records.Add(MacroLineRecord(moduleName, DiffKind.Changed, i + 1, j + 1, sourceLines[i], targetLines[j]));
+                i++;
+                j++;
+                emitted++;
+                continue;
+            }
+
+            if (i < sourceLines.Length)
+            {
+                records.Add(MacroLineRecord(moduleName, DiffKind.Removed, i + 1, null, sourceLines[i], string.Empty));
+                i++;
+                emitted++;
+                continue;
+            }
+
+            records.Add(MacroLineRecord(moduleName, DiffKind.Added, null, j + 1, string.Empty, targetLines[j]));
+            j++;
+            emitted++;
+        }
+
+        if (i < sourceLines.Length || j < targetLines.Length)
+        {
+            records.Add(new(
+                DiffCategory.Macro,
+                DiffKind.Changed,
+                string.Empty,
+                string.Empty,
+                $"{moduleName} 行差分",
+                string.Empty,
+                string.Empty,
+                $"行差分が多いため、先頭 {MaxMacroLineDiffsPerModule:N0} 件のみ表示しています。"));
+        }
+    }
+
+    private static DiffRecord MacroLineRecord(
+        string moduleName,
+        DiffKind kind,
+        int? sourceLine,
+        int? targetLine,
+        string source,
+        string target)
+    {
+        var address = (sourceLine, targetLine) switch
+        {
+            (not null, not null) => $"L{sourceLine} -> L{targetLine}",
+            (not null, null) => $"L{sourceLine}",
+            (null, not null) => $"L{targetLine}",
+            _ => string.Empty
+        };
+
+        return new(
+            DiffCategory.Macro,
+            kind,
+            string.Empty,
+            address,
+            $"{moduleName} 行差分",
+            Shorten(source),
+            Shorten(target),
+            "VBAコード行の差分です。",
+            source,
+            target);
+    }
+
+    private static string PreviewCode(string text)
+    {
+        var lines = SplitLines(text)
+            .Where(line => !string.IsNullOrWhiteSpace(line))
+            .Take(12);
+
+        return string.Join('\n', lines);
+    }
+
+    private static string Shorten(string value)
+    {
+        const int maxLength = 160;
+        if (value.Length <= maxLength)
+        {
+            return value;
+        }
+
+        return value[..maxLength] + "...";
     }
 
     private static string[] SplitLines(string text) =>
