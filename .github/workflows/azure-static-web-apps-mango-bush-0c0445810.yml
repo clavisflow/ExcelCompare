@@ -34,7 +34,7 @@ jobs:
         run: dotnet restore
 
       - name: Publish
-        run: dotnet publish ExcelDoctor.csproj -c Release -o publish
+        run: dotnet publish ExcelCompare.csproj -c Release -o publish
 
       - name: Deploy to Azure Static Web Apps
         id: builddeploy
