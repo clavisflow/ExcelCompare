@@ -1,0 +1,434 @@
+@page "/"
+@inject ExcelDiffService DiffService
+@inject CsvExportService CsvExport
+@inject ISnackbar Snackbar
+@inject IJSRuntime JsRuntime
+
+<PageTitle>ExcelCompare</PageTitle>
+
+<section class="diagnostics-shell diff-shell">
+    <MudStack Spacing="3">
+        <div class="workspace-title">
+            <div>
+                <a class="product-brand" href="https://clavisflow.net/">
+                    <span class="brand-mark" aria-hidden="true"><img src="clavisflow-icon.png" alt=""></span>
+                    <span>ClavisFlow</span>
+                </a>
+                <h1>EXCEL差分比較アプリ「ExcelCompare」</h1>
+                <p class="lead-copy">
+                    .xlsx / .xlsm をブラウザ内だけで解析し、セル値、数式、名前定義、書式、シート構成、VBAマクロの差分を確認します。
+                    ファイルは外部サーバーへ送信されません。
+                </p>
+            </div>
+            <MudChip T="string" Class="privacy-chip" Color="Color.Primary" Variant="Variant.Filled" Icon="@Icons.Material.Filled.Security">
+                100% クライアントサイド
+            </MudChip>
+        </div>
+
+        <MudGrid Spacing="3">
+            <MudItem xs="12" md="6">
+                <MudFileUpload T="IBrowserFile" Accept=".xlsx,.xlsm" MaxFileSize="@ExcelDiffService.MaxFileSize" FilesChanged="OnSourceFileChanged">
+                    <CustomContent Context="picker">
+                        <MudPaper Class="upload-zone clickable-upload" Elevation="0" @onclick="@picker.OpenFilePickerAsync" role="button" tabindex="0">
+                            <div class="upload-heading">
+                                <span class="upload-icon">A</span>
+                                <div>
+                                    <MudText Typo="Typo.h6">比較元ファイル</MudText>
+                                    <MudText Typo="Typo.body2">変更前または基準にするExcelを選択</MudText>
+                                </div>
+                            </div>
+                            <MudStack AlignItems="AlignItems.Center" Justify="Justify.Center" Class="upload-content">
+                                <MudIcon Icon="@Icons.Material.Filled.UploadFile" Size="Size.Large" />
+                                <MudText Typo="Typo.subtitle1" Class="upload-action-text">クリックして比較元を選択</MudText>
+                                <MudText Typo="Typo.caption">最大10MB / .xlsx .xlsm</MudText>
+                            </MudStack>
+                            @RenderMetadata(_sourceMetadata)
+                        </MudPaper>
+                    </CustomContent>
+                </MudFileUpload>
+            </MudItem>
+
+            <MudItem xs="12" md="6">
+                <MudFileUpload T="IBrowserFile" Accept=".xlsx,.xlsm" MaxFileSize="@ExcelDiffService.MaxFileSize" FilesChanged="OnTargetFileChanged">
+                    <CustomContent Context="picker">
+                        <MudPaper Class="upload-zone clickable-upload" Elevation="0" @onclick="@picker.OpenFilePickerAsync" role="button" tabindex="0">
+                            <div class="upload-heading">
+                                <span class="upload-icon">B</span>
+                                <div>
+                                    <MudText Typo="Typo.h6">比較先ファイル</MudText>
+                                    <MudText Typo="Typo.body2">変更後または確認対象のExcelを選択</MudText>
+                                </div>
+                            </div>
+                            <MudStack AlignItems="AlignItems.Center" Justify="Justify.Center" Class="upload-content">
+                                <MudIcon Icon="@Icons.Material.Filled.UploadFile" Size="Size.Large" />
+                                <MudText Typo="Typo.subtitle1" Class="upload-action-text">クリックして比較先を選択</MudText>
+                                <MudText Typo="Typo.caption">最大10MB / .xlsx .xlsm</MudText>
+                            </MudStack>
+                            @RenderMetadata(_targetMetadata)
+                        </MudPaper>
+                    </CustomContent>
+                </MudFileUpload>
+            </MudItem>
+        </MudGrid>
+
+        <MudPaper Class="control-panel" Elevation="0">
+            <MudGrid Spacing="2">
+                <MudItem xs="12" lg="8">
+                    <MudGrid Spacing="1">
+                        <MudItem xs="12" sm="6" md="3">
+                            <MudCheckBox @bind-Value="_includeData" Color="Color.Primary" Label="データ" />
+                            <MudText Typo="Typo.caption">セル値、数式、名前定義</MudText>
+                        </MudItem>
+                        <MudItem xs="12" sm="6" md="3">
+                            <MudCheckBox @bind-Value="_includeFormatting" Color="Color.Primary" Label="書式" />
+                            <MudText Typo="Typo.caption">背景色、文字色、表示形式</MudText>
+                        </MudItem>
+                        <MudItem xs="12" sm="6" md="3">
+                            <MudCheckBox @bind-Value="_includeStructure" Color="Color.Primary" Label="ファイル構成" />
+                            <MudText Typo="Typo.caption">シート、保護、入力規則、非表示</MudText>
+                        </MudItem>
+                        <MudItem xs="12" sm="6" md="3">
+                            <MudCheckBox @bind-Value="_includeMacros" Color="Color.Primary" Label="マクロ" />
+                            <MudText Typo="Typo.caption">.xlsm同士のみ詳細比較</MudText>
+                        </MudItem>
+                    </MudGrid>
+                </MudItem>
+                <MudItem xs="12" lg="4">
+                    <MudStack Row="true" AlignItems="AlignItems.Center" Justify="Justify.FlexEnd" Spacing="2">
+                        <MudButton Variant="Variant.Filled" Color="Color.Primary" Size="Size.Large" StartIcon="@Icons.Material.Filled.PlayArrow" Disabled="@_isRunning" OnClick="StartCompareAsync">
+                            比較開始
+                        </MudButton>
+                        <MudButton Variant="Variant.Outlined" Color="Color.Secondary" StartIcon="@Icons.Material.Filled.Download" Disabled="@(!FilteredRecords.Any())" OnClick="DownloadCsvAsync">
+                            CSV
+                        </MudButton>
+                    </MudStack>
+                </MudItem>
+            </MudGrid>
+
+            @if (_isRunning)
+            {
+                <MudStack Spacing="1" Class="progress-area">
+                    <MudProgressLinear Value="@_progressPercent" Color="Color.Primary" />
+                    <MudText Typo="Typo.body2">@_progressStatus</MudText>
+                </MudStack>
+            }
+        </MudPaper>
+
+        @if (_result is not null)
+        {
+            <MudGrid Spacing="2">
+                @SummaryCard("合計", _result.Summary.Total, Icons.Material.Filled.Summarize, Color.Primary)
+                @SummaryCard("シート構成", _result.Summary.StructureCount, Icons.Material.Filled.AccountTree, Color.Secondary)
+                @SummaryCard("セル詳細", _result.Summary.CellCount + _result.Summary.FormattingCount, Icons.Material.Filled.GridOn, Color.Info)
+                @SummaryCard("マクロ", _result.Summary.MacroCount, Icons.Material.Filled.Code, Color.Warning)
+                @SummaryCard("メタデータ", _result.Summary.MetadataCount, Icons.Material.Filled.Label, Color.Tertiary)
+            </MudGrid>
+
+            <MudPaper Class="result-panel" Elevation="0">
+                <MudGrid Spacing="2">
+                    <MudItem xs="12" md="4">
+                        <MudTextField @bind-Value="_keyword" Label="キーワード検索" Variant="Variant.Outlined" Margin="Margin.Dense" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Clearable="true" />
+                    </MudItem>
+                    <MudItem xs="12" sm="6" md="3">
+                        <MudSelect T="string" @bind-Value="_sheetFilter" Label="シート名" Variant="Variant.Outlined" Margin="Margin.Dense">
+                            <MudSelectItem T="string" Value="@AllFilter">すべて</MudSelectItem>
+                            @foreach (var sheet in SheetOptions)
+                            {
+                                <MudSelectItem T="string" Value="@sheet">@sheet</MudSelectItem>
+                            }
+                        </MudSelect>
+                    </MudItem>
+                    <MudItem xs="12" sm="6" md="3">
+                        <MudSelect T="string" @bind-Value="_kindFilter" Label="差分種別" Variant="Variant.Outlined" Margin="Margin.Dense">
+                            <MudSelectItem T="string" Value="@AllFilter">すべて</MudSelectItem>
+                            <MudSelectItem T="string" Value="@DiffKind.Added.ToString()">追加</MudSelectItem>
+                            <MudSelectItem T="string" Value="@DiffKind.Removed.ToString()">削除</MudSelectItem>
+                            <MudSelectItem T="string" Value="@DiffKind.Changed.ToString()">変更</MudSelectItem>
+                            <MudSelectItem T="string" Value="@DiffKind.Renamed.ToString()">名称変更</MudSelectItem>
+                        </MudSelect>
+                    </MudItem>
+                    <MudItem xs="12" md="2">
+                        <MudText Typo="Typo.body2" Align="Align.Right">表示 @FilteredRecords.Count 件</MudText>
+                    </MudItem>
+                </MudGrid>
+
+                <MudTabs @bind-ActivePanelIndex="_activeTab" Class="diff-tabs" Rounded="false" Elevation="0">
+                    <MudTabPanel Text="シート構成" Icon="@Icons.Material.Filled.AccountTree" />
+                    <MudTabPanel Text="セル詳細" Icon="@Icons.Material.Filled.GridOn" />
+                    <MudTabPanel Text="マクロ詳細" Icon="@Icons.Material.Filled.Code" />
+                    <MudTabPanel Text="その他メタデータ" Icon="@Icons.Material.Filled.Label" />
+                </MudTabs>
+
+                <MudDataGrid T="DiffRecord"
+                             Items="@FilteredRecords"
+                             Dense="true"
+                             Hover="true"
+                             Bordered="false"
+                             Striped="true"
+                             Filterable="false"
+                             SortMode="SortMode.Multiple"
+                             RowsPerPage="50"
+                             Class="diff-grid">
+                    <Columns>
+                        <TemplateColumn T="DiffRecord" Title="カテゴリ" SortBy="@(row => row.Category)">
+                            <CellTemplate>@CategoryLabel(context.Item.Category)</CellTemplate>
+                        </TemplateColumn>
+                        <TemplateColumn T="DiffRecord" Title="種別" SortBy="@(row => row.Kind)">
+                            <CellTemplate>
+                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@KindColor(context.Item.Kind)">
+                                    @KindLabel(context.Item.Kind)
+                                </MudChip>
+                            </CellTemplate>
+                        </TemplateColumn>
+                        <PropertyColumn T="DiffRecord" TProperty="string" Property="row => row.SheetName" Title="シート" />
+                        <PropertyColumn T="DiffRecord" TProperty="string" Property="row => row.Address" Title="アドレス" />
+                        <PropertyColumn T="DiffRecord" TProperty="string" Property="row => row.Item" Title="項目" />
+                        <PropertyColumn T="DiffRecord" TProperty="string" Property="row => row.SourceValue" Title="比較元" />
+                        <PropertyColumn T="DiffRecord" TProperty="string" Property="row => row.TargetValue" Title="比較先" />
+                        <PropertyColumn T="DiffRecord" TProperty="string" Property="row => row.Detail" Title="詳細" />
+                    </Columns>
+                    <PagerContent>
+                        <MudDataGridPager T="DiffRecord" PageSizeOptions="@(new[] { 50, 100, 250 })" />
+                    </PagerContent>
+                </MudDataGrid>
+            </MudPaper>
+        }
+    </MudStack>
+</section>
+
+@code {
+    private const string AllFilter = "__all__";
+
+    private IBrowserFile? _sourceFile;
+    private IBrowserFile? _targetFile;
+    private FileMetadata? _sourceMetadata;
+    private FileMetadata? _targetMetadata;
+    private CompareResult? _result;
+    private bool _includeData = true;
+    private bool _includeFormatting;
+    private bool _includeStructure = true;
+    private bool _includeMacros = true;
+    private bool _isRunning;
+    private int _progressPercent;
+    private int _activeTab;
+    private string _progressStatus = string.Empty;
+    private string _sheetFilter = AllFilter;
+    private string _kindFilter = AllFilter;
+    private string _keyword = string.Empty;
+
+    private List<DiffRecord> FilteredRecords => ApplyFilters().ToList();
+
+    private IEnumerable<string> SheetOptions => _result is null
+        ? Enumerable.Empty<string>()
+        : _result.Records
+            .Select(record => record.SheetName)
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.OrdinalIgnoreCase);
+
+    private async Task OnSourceFileChanged(IBrowserFile? file)
+    {
+        _sourceFile = file;
+        _sourceMetadata = await TryReadMetadataAsync(file);
+    }
+
+    private async Task OnTargetFileChanged(IBrowserFile? file)
+    {
+        _targetFile = file;
+        _targetMetadata = await TryReadMetadataAsync(file);
+    }
+
+    private async Task<FileMetadata?> TryReadMetadataAsync(IBrowserFile? file)
+    {
+        if (file is null)
+        {
+            return null;
+        }
+
+        try
+        {
+            return await DiffService.ReadMetadataAsync(file);
+        }
+        catch (InvalidOperationException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        catch
+        {
+            Snackbar.Add("ファイルの解析に失敗しました。ファイルが破損しているか、サイズが大きすぎる可能性があります。", Severity.Error);
+        }
+
+        return null;
+    }
+
+    private async Task StartCompareAsync()
+    {
+        if (_sourceFile is null)
+        {
+            Snackbar.Add("比較元ファイルを選択してください。", Severity.Warning);
+            return;
+        }
+
+        if (_targetFile is null)
+        {
+            Snackbar.Add("比較先ファイルを選択してください。", Severity.Warning);
+            return;
+        }
+
+        _isRunning = true;
+        _result = null;
+        _progressPercent = 0;
+        _progressStatus = "Excel読込中...";
+
+        var progress = new Progress<CompareProgress>(value =>
+        {
+            _progressStatus = value.Status;
+            _progressPercent = value.Percent;
+            _ = InvokeAsync(StateHasChanged);
+        });
+
+        try
+        {
+            var options = new ComparisonOptions(_includeData, _includeFormatting, _includeStructure, _includeMacros);
+            _result = await DiffService.CompareAsync(_sourceFile, _targetFile, options, progress);
+            _sheetFilter = AllFilter;
+            _kindFilter = AllFilter;
+            _keyword = string.Empty;
+            Snackbar.Add($"比較が完了しました。差分 {_result.Summary.Total:N0} 件", Severity.Success);
+        }
+        catch (InvalidOperationException ex)
+        {
+            Snackbar.Add(ex.Message, Severity.Error);
+        }
+        catch
+        {
+            Snackbar.Add("ファイルの解析に失敗しました。ファイルが破損しているか、サイズが大きすぎる可能性があります。", Severity.Error);
+        }
+        finally
+        {
+            _isRunning = false;
+        }
+    }
+
+    private async Task DownloadCsvAsync()
+    {
+        var records = FilteredRecords;
+        if (records.Count == 0)
+        {
+            Snackbar.Add("出力対象の差分がありません。", Severity.Info);
+            return;
+        }
+
+        var bytes = CsvExport.BuildDiffCsv(records);
+        var fileName = $"excel-diff-{DateTime.Now:yyyyMMdd-HHmmss}.csv";
+        await JsRuntime.InvokeVoidAsync("excelCompare.downloadBytes", fileName, "text/csv;charset=utf-8", Convert.ToBase64String(bytes));
+    }
+
+    private IEnumerable<DiffRecord> ApplyFilters()
+    {
+        if (_result is null)
+        {
+            return [];
+        }
+
+        var category = ActiveCategory();
+        var query = _result.Records.Where(record => category(record.Category));
+
+        if (_sheetFilter != AllFilter)
+        {
+            query = query.Where(record => record.SheetName.Equals(_sheetFilter, StringComparison.OrdinalIgnoreCase));
+        }
+
+        if (_kindFilter != AllFilter && Enum.TryParse<DiffKind>(_kindFilter, out var kind))
+        {
+            query = query.Where(record => record.Kind == kind);
+        }
+
+        if (!string.IsNullOrWhiteSpace(_keyword))
+        {
+            query = query.Where(ContainsKeyword);
+        }
+
+        return query;
+    }
+
+    private Func<DiffCategory, bool> ActiveCategory() => _activeTab switch
+    {
+        0 => category => category == DiffCategory.Structure,
+        1 => category => category is DiffCategory.Cell or DiffCategory.Formatting,
+        2 => category => category == DiffCategory.Macro,
+        _ => category => category == DiffCategory.Metadata
+    };
+
+    private bool ContainsKeyword(DiffRecord record)
+    {
+        return Contains(record.SheetName) ||
+            Contains(record.Address) ||
+            Contains(record.Item) ||
+            Contains(record.SourceValue) ||
+            Contains(record.TargetValue) ||
+            Contains(record.Detail);
+    }
+
+    private bool Contains(string value) =>
+        value.Contains(_keyword, StringComparison.OrdinalIgnoreCase);
+
+    private RenderFragment RenderMetadata(FileMetadata? metadata) => builder =>
+    {
+        if (metadata is null)
+        {
+            builder.OpenComponent<MudText>(0);
+            builder.AddAttribute(1, "Typo", Typo.body2);
+            builder.AddAttribute(2, "Class", "metadata-empty");
+            builder.AddAttribute(3, "ChildContent", (RenderFragment)(b => b.AddContent(4, "未選択")));
+            builder.CloseComponent();
+            return;
+        }
+
+        builder.OpenElement(5, "div");
+        builder.AddAttribute(6, "class", "file-meta");
+        builder.AddContent(7, metadata.FileName);
+        builder.OpenElement(8, "span");
+        builder.AddContent(9, $"{FormatBytes(metadata.SizeBytes)} / {metadata.SheetCount} sheets / {(metadata.HasMacro ? "macro" : "no macro")}");
+        builder.CloseElement();
+        builder.CloseElement();
+    };
+
+    private RenderFragment SummaryCard(string label, int value, string icon, Color color) =>
+        @<MudItem xs="12" sm="6" md="2">
+            <MudPaper Class="summary-card" Elevation="0">
+                <MudIcon Icon="@icon" Color="@color" />
+                <MudText Typo="Typo.caption">@label</MudText>
+                <MudText Typo="Typo.h5">@value.ToString("N0")</MudText>
+            </MudPaper>
+        </MudItem>;
+
+    private static string FormatBytes(long bytes) => $"{bytes / 1024d / 1024d:N2} MB";
+
+    private static string CategoryLabel(DiffCategory category) => category switch
+    {
+        DiffCategory.Structure => "シート構成",
+        DiffCategory.Cell => "セル詳細",
+        DiffCategory.Formatting => "書式",
+        DiffCategory.Macro => "マクロ",
+        DiffCategory.Metadata => "その他メタデータ",
+        _ => category.ToString()
+    };
+
+    private static string KindLabel(DiffKind kind) => kind switch
+    {
+        DiffKind.Added => "追加",
+        DiffKind.Removed => "削除",
+        DiffKind.Changed => "変更",
+        DiffKind.Renamed => "名称変更",
+        _ => kind.ToString()
+    };
+
+    private static Color KindColor(DiffKind kind) => kind switch
+    {
+        DiffKind.Added => Color.Success,
+        DiffKind.Removed => Color.Error,
+        DiffKind.Renamed => Color.Info,
+        _ => Color.Warning
+    };
+}
