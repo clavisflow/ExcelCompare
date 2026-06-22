@@ -184,7 +184,7 @@
                                  RowsPerPage="50"
                                  Class="diff-grid">
                         <Columns>
-                            <HierarchyColumn T="DiffRecord" EnableHeaderToggle="false" />
+                            <HierarchyColumn T="DiffRecord" EnableHeaderToggle="false" ButtonDisabledFunc="@IsModuleBodyRecord" />
                             <TemplateColumn T="DiffRecord" Title="カテゴリ" SortBy="@(row => row.Category)">
                                 <CellTemplate>@CategoryLabel(context.Item.Category)</CellTemplate>
                             </TemplateColumn>
@@ -207,22 +207,25 @@
                             <PropertyColumn T="DiffRecord" TProperty="string" Property="row => row.Detail" Title="詳細" />
                         </Columns>
                         <ChildRowContent>
-                            <div class="diff-detail">
-                                <div>
-                                    <span>差分詳細</span>
-                                    <p>@context.Item.Detail</p>
-                                </div>
-                                <div class="diff-detail-grid">
+                            @if (!IsModuleBodyRecord(context.Item))
+                            {
+                                <div class="diff-detail">
                                     <div>
-                                        <strong>比較元</strong>
-                                        @RenderPreviewBlock(context.Item, isSource: true)
+                                        <span>差分詳細</span>
+                                        <p>@context.Item.Detail</p>
                                     </div>
-                                    <div>
-                                        <strong>比較先</strong>
-                                        @RenderPreviewBlock(context.Item, isSource: false)
+                                    <div class="diff-detail-grid">
+                                        <div>
+                                            <strong>比較元</strong>
+                                            @RenderPreviewBlock(context.Item, isSource: true)
+                                        </div>
+                                        <div>
+                                            <strong>比較先</strong>
+                                            @RenderPreviewBlock(context.Item, isSource: false)
+                                        </div>
                                     </div>
                                 </div>
-                            </div>
+                            }
                         </ChildRowContent>
                         <PagerContent>
                             <MudDataGridPager T="DiffRecord" PageSizeOptions="@(new[] { 50, 100, 250 })" />
@@ -247,7 +250,7 @@
     private FileMetadata? _targetMetadata;
     private CompareResult? _result;
     private bool _includeData = true;
-    private bool _includeFormatting;
+    private bool _includeFormatting = true;
     private bool _includeStructure = true;
     private bool _includeMacros = true;
     private bool _isRunning;
@@ -627,6 +630,9 @@
     private static string PreviewBlockClass(DiffRecord record) =>
         record.Category == DiffCategory.Macro ? "preview-block macro-preview" : "preview-block";
 
+    private static bool IsModuleBodyRecord(DiffRecord record) =>
+        record.Category == DiffCategory.Macro && record.Item.EndsWith(" モジュール本体", StringComparison.Ordinal);
+
     private RenderFragment RenderMetadata(FileMetadata? metadata, Action clearFile) => builder =>
     {
         if (metadata is null)
@@ -729,12 +735,17 @@
             return string.Empty;
         }
 
-        const string lineDiffSuffix = " 行差分";
-        return record.Item.EndsWith(lineDiffSuffix, StringComparison.Ordinal)
-            ? record.Item[..^lineDiffSuffix.Length]
-            : record.Item is "マクロ比較" or "マクロ有無" or "VBA保護"
-                ? string.Empty
-                : record.Item;
+        foreach (var suffix in new[] { " 行差分", " モジュール本体", " 行差分詳細", " モジュール概要" })
+        {
+            if (record.Item.EndsWith(suffix, StringComparison.Ordinal))
+            {
+                return record.Item[..^suffix.Length];
+            }
+        }
+
+        return record.Item is "マクロ比較" or "マクロ有無" or "VBA保護" or "VBA解析"
+            ? string.Empty
+            : record.Item;
     }
 
     private static string KindLabel(DiffKind kind) => kind switch

@@ -868,7 +868,9 @@ public sealed class ExcelDiffService
                     kind == DiffKind.Added ? "列挿入またはセル追加を検出しました。" : "列削除またはセル削除を検出しました。"));
             }
 
-            if (options.IncludeFormatting && !string.IsNullOrEmpty(cell.StyleSignature))
+            if (options.IncludeFormatting &&
+                !string.IsNullOrEmpty(cell.StyleSignature) &&
+                !string.IsNullOrEmpty(cell.DataSignature))
             {
                 records.Add(new(
                     DiffCategory.Formatting,
@@ -970,11 +972,11 @@ public sealed class ExcelDiffService
             var right = rightModules[name];
             if (!left.SourceText.Equals(right.SourceText, StringComparison.Ordinal))
             {
-                var changedLines = CountChangedLines(left.SourceText, right.SourceText);
-                var detail = changedLines > MaxMacroLineDiffsPerModule
-                    ? $"コードが大きく変更されました。変更行数目安: {changedLines:N0}行。行差分は先頭 {MaxMacroLineDiffsPerModule:N0} 件のみ表示します。"
-                    : $"コードが変更されました。変更行数目安: {changedLines:N0}行";
-                records.Add(new(DiffCategory.Macro, DiffKind.Changed, string.Empty, string.Empty, name, $"{left.LineCount}行", $"{right.LineCount}行", detail));
+                var changedEntries = CountMacroLineDiffEntries(left.SourceText, right.SourceText);
+                var detail = changedEntries > MaxMacroLineDiffsPerModule
+                    ? $"コードが変更されました。行差分は先頭 {MaxMacroLineDiffsPerModule:N0} 件のみ表示します。"
+                    : "コードが変更されました。";
+                records.Add(new(DiffCategory.Macro, DiffKind.Changed, string.Empty, string.Empty, $"{name} モジュール本体", $"全{left.LineCount:N0}行", $"全{right.LineCount:N0}行", detail));
                 AddMacroLineDiffs(records, name, left.SourceText, right.SourceText);
             }
         }
@@ -1381,14 +1383,6 @@ public sealed class ExcelDiffService
     private static int CountSourceLines(string text) =>
         string.IsNullOrEmpty(text) ? 0 : text.Count(character => character == '\n') + 1;
 
-    private static int CountChangedLines(string left, string right)
-    {
-        var leftLines = SplitLines(left);
-        var rightLines = SplitLines(right);
-        var common = CountCommonLines(leftLines, rightLines);
-        return Math.Max(0, leftLines.Length - common) + Math.Max(0, rightLines.Length - common);
-    }
-
     private static void AddMacroLineDiffs(
         ICollection<DiffRecord> records,
         string moduleName,
@@ -1466,6 +1460,65 @@ public sealed class ExcelDiffService
                 string.Empty,
                 $"行差分が多いため、先頭 {MaxMacroLineDiffsPerModule:N0} 件のみ表示しています。"));
         }
+    }
+
+    private static int CountMacroLineDiffEntries(string sourceText, string targetText)
+    {
+        var sourceLines = SplitLines(sourceText);
+        var targetLines = SplitLines(targetText);
+        var i = 0;
+        var j = 0;
+        var count = 0;
+
+        while (i < sourceLines.Length || j < targetLines.Length)
+        {
+            if (i < sourceLines.Length &&
+                j < targetLines.Length &&
+                sourceLines[i].Equals(targetLines[j], StringComparison.Ordinal))
+            {
+                i++;
+                j++;
+                continue;
+            }
+
+            if (i + 1 < sourceLines.Length &&
+                j < targetLines.Length &&
+                sourceLines[i + 1].Equals(targetLines[j], StringComparison.Ordinal))
+            {
+                i++;
+                count++;
+                continue;
+            }
+
+            if (j + 1 < targetLines.Length &&
+                i < sourceLines.Length &&
+                sourceLines[i].Equals(targetLines[j + 1], StringComparison.Ordinal))
+            {
+                j++;
+                count++;
+                continue;
+            }
+
+            if (i < sourceLines.Length && j < targetLines.Length)
+            {
+                i++;
+                j++;
+                count++;
+                continue;
+            }
+
+            if (i < sourceLines.Length)
+            {
+                i++;
+                count++;
+                continue;
+            }
+
+            j++;
+            count++;
+        }
+
+        return count;
     }
 
     private static DiffRecord MacroLineRecord(
