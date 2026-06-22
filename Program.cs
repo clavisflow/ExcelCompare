@@ -3,6 +3,9 @@ using Microsoft.AspNetCore.Components.WebAssembly.Hosting;
 using ExcelCompare;
 using ExcelCompare.Services;
 using MudBlazor.Services;
+using System.Text;
+
+Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
 
 var builder = WebAssemblyHostBuilder.CreateDefault(args);
 builder.RootComponents.Add<App>("#app");

@@ -72,6 +72,11 @@ public sealed class ExcelDiffService
             CompareStructure(source, target, records);
         }
 
+        if (options.IncludeData)
+        {
+            CompareDefinedNames(source, target, records);
+        }
+
         if (options.IncludeData || options.IncludeFormatting)
         {
             progress?.Report(new("差分比較中...", 65));
@@ -435,8 +440,6 @@ public sealed class ExcelDiffService
             CompareStringSets(records, name, "入力規則", left.DataValidations, right.DataValidations);
             CompareColumnStructure(records, name, left, right);
         }
-
-        CompareDefinedNames(source, target, records);
     }
 
     private static void CompareColumnStructure(

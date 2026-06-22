@@ -148,23 +148,43 @@ internal static class VbaProjectSourceReader
 
     private static string DecodeSource(byte[] bytes, int? codePage)
     {
-        try
+        if (codePage is not null)
         {
-            if (codePage == 65001)
+            try
             {
-                return Encoding.UTF8.GetString(bytes);
+                var encoding = Encoding.GetEncoding(
+                    codePage.Value,
+                    EncoderFallback.ExceptionFallback,
+                    DecoderFallback.ExceptionFallback);
+                return encoding.GetString(bytes);
             }
-
-            if (codePage == 1200)
+            catch (DecoderFallbackException)
             {
-                return Encoding.Unicode.GetString(bytes);
+                // Fall through to tolerant decoding rather than failing the whole comparison.
+            }
+            catch (ArgumentException)
+            {
+                // Some VBA projects omit or use a code page unavailable in the runtime.
             }
         }
-        catch (DecoderFallbackException)
+
+        foreach (var fallback in new[]
+                 {
+                     new UTF8Encoding(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true),
+                     Encoding.GetEncoding(1200, EncoderFallback.ExceptionFallback, DecoderFallback.ExceptionFallback)
+                 })
         {
-            // Latin1 preserves ASCII keywords even when the project uses a legacy code page.
+            try
+            {
+                return fallback.GetString(bytes);
+            }
+            catch (DecoderFallbackException)
+            {
+                // Try the next tolerant fallback.
+            }
         }
 
+        // Latin1 preserves ASCII keywords even when the project uses an unknown legacy code page.
         return Encoding.Latin1.GetString(bytes);
     }
 

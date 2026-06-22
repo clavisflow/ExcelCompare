@@ -47,11 +47,11 @@ public sealed class CsvExportService
 
     private static string ToLabel(DiffCategory category) => category switch
     {
-        DiffCategory.Structure => "シート構成",
-        DiffCategory.Cell => "セル詳細",
+        DiffCategory.Structure => "ファイル構成",
+        DiffCategory.Cell => "データ",
         DiffCategory.Formatting => "書式",
         DiffCategory.Macro => "マクロ",
-        DiffCategory.Metadata => "その他メタデータ",
+        DiffCategory.Metadata => "名前定義",
         _ => category.ToString()
     };
 

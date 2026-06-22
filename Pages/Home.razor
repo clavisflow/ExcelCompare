@@ -14,15 +14,13 @@
                     <span class="brand-mark" aria-hidden="true"><img src="clavisflow-icon.png" alt=""></span>
                     <span>ClavisFlow</span>
                 </a>
-                <h1>EXCEL差分比較アプリ「ExcelCompare」</h1>
+                <h1>EXCEL差分比較アプリ「エクセルコンペア」</h1>
                 <p class="lead-copy">
-                    .xlsx / .xlsm をブラウザ内だけで解析し、セル値、数式、名前定義、書式、シート構成、VBAマクロの差分を確認します。
-                    ファイルは外部サーバーへ送信されません。
+                    「どこが変わった？」を一瞬で。<br />
+                    EXCELファイルどうしのセル値、数式、名前定義、書式、ファイル構成、VBAマクロの差分を見つけます。<br />
+                    ファイルは外部サーバーへ送信されず、すべての解析をブラウザ上で安全に行います。
                 </p>
             </div>
-            <MudChip T="string" Class="privacy-chip" Color="Color.Primary" Variant="Variant.Filled" Icon="@Icons.Material.Filled.Security">
-                100% クライアントサイド
-            </MudChip>
         </div>
 
         <MudGrid Spacing="3">
@@ -33,15 +31,8 @@
                             <div class="upload-heading">
                                 <span class="upload-icon">A</span>
                                 <div>
-                                    <MudText Typo="Typo.h6">比較元ファイル</MudText>
-                                    <MudText Typo="Typo.body2">変更前または基準にするExcelを選択</MudText>
-                                </div>
-                            </div>
-                            <div class="upload-hint">
-                                <MudIcon Icon="@Icons.Material.Filled.UploadFile" Size="Size.Large" />
-                                <div>
-                                    <MudText Typo="Typo.subtitle1" Class="upload-action-text">パネルをクリックして選択</MudText>
-                                    <MudText Typo="Typo.caption">最大10MB / .xlsx .xlsm</MudText>
+                                    <MudText Typo="Typo.h6">比較元ファイルを選択またはドロップ</MudText>
+                                    <MudText Typo="Typo.body2">.xlsx .xlsm 対応。最大 10MB。</MudText>
                                 </div>
                             </div>
                             @RenderMetadata(_sourceMetadata, ClearSourceFile)
@@ -58,15 +49,8 @@
                             <div class="upload-heading">
                                 <span class="upload-icon">B</span>
                                 <div>
-                                    <MudText Typo="Typo.h6">比較先ファイル</MudText>
-                                    <MudText Typo="Typo.body2">変更後または確認対象のExcelを選択</MudText>
-                                </div>
-                            </div>
-                            <div class="upload-hint">
-                                <MudIcon Icon="@Icons.Material.Filled.UploadFile" Size="Size.Large" />
-                                <div>
-                                    <MudText Typo="Typo.subtitle1" Class="upload-action-text">パネルをクリックして選択</MudText>
-                                    <MudText Typo="Typo.caption">最大10MB / .xlsx .xlsm</MudText>
+                                    <MudText Typo="Typo.h6">比較先ファイルを選択またはドロップ</MudText>
+                                    <MudText Typo="Typo.body2">.xlsx .xlsm 対応。最大 10MB。</MudText>
                                 </div>
                             </div>
                             @RenderMetadata(_targetMetadata, ClearTargetFile)
@@ -124,10 +108,10 @@
         {
             <MudGrid Spacing="2">
                 @SummaryCard("合計", _result.Summary.Total, Icons.Material.Filled.Summarize, Color.Primary, -1)
-                @SummaryCard("シート構成", _result.Summary.StructureCount, Icons.Material.Filled.AccountTree, Color.Secondary, 0)
-                @SummaryCard("セル詳細", _result.Summary.CellCount + _result.Summary.FormattingCount, Icons.Material.Filled.GridOn, Color.Info, 1)
-                @SummaryCard("マクロ", _result.Summary.MacroCount, Icons.Material.Filled.Code, Color.Warning, 2)
-                @SummaryCard("メタデータ", _result.Summary.MetadataCount, Icons.Material.Filled.Label, Color.Tertiary, 3)
+                @SummaryCard("データ", _result.Summary.CellCount + _result.Summary.MetadataCount, Icons.Material.Filled.GridOn, Color.Info, 0)
+                @SummaryCard("書式", _result.Summary.FormattingCount, Icons.Material.Filled.FormatColorFill, Color.Success, 1)
+                @SummaryCard("ファイル構成", _result.Summary.StructureCount, Icons.Material.Filled.AccountTree, Color.Secondary, 2)
+                @SummaryCard("マクロ", _result.Summary.MacroCount, Icons.Material.Filled.Code, Color.Warning, 3)
             </MudGrid>
 
             <MudPaper Class="result-panel" Elevation="0">
@@ -159,10 +143,10 @@
                 </MudGrid>
 
                 <MudTabs @bind-ActivePanelIndex="_activeTab" Class="diff-tabs" Rounded="false" Elevation="0">
-                    <MudTabPanel Text="シート構成" Icon="@Icons.Material.Filled.AccountTree" />
-                    <MudTabPanel Text="セル詳細" Icon="@Icons.Material.Filled.GridOn" />
-                    <MudTabPanel Text="マクロ詳細" Icon="@Icons.Material.Filled.Code" />
-                    <MudTabPanel Text="その他メタデータ" Icon="@Icons.Material.Filled.Label" />
+                    <MudTabPanel Text="データ" Icon="@Icons.Material.Filled.GridOn" />
+                    <MudTabPanel Text="書式" Icon="@Icons.Material.Filled.FormatColorFill" />
+                    <MudTabPanel Text="ファイル構成" Icon="@Icons.Material.Filled.AccountTree" />
+                    <MudTabPanel Text="マクロ" Icon="@Icons.Material.Filled.Code" />
                 </MudTabs>
 
                 <MudDataGrid T="DiffRecord"
@@ -223,6 +207,10 @@
             </MudPaper>
         }
     </MudStack>
+
+    <footer class="site-footer">
+        Built with C#, Blazor WebAssembly and Azure Static Web Apps.
+    </footer>
 </section>
 
 @code {
@@ -298,22 +286,27 @@
             return 0;
         }
 
-        if (_result.Summary.StructureCount > 0)
+        if (_result.Summary.CellCount + _result.Summary.MetadataCount > 0)
         {
             return 0;
         }
 
-        if (_result.Summary.CellCount + _result.Summary.FormattingCount > 0)
+        if (_result.Summary.FormattingCount > 0)
         {
             return 1;
         }
 
-        if (_result.Summary.MacroCount > 0)
+        if (_result.Summary.StructureCount > 0)
         {
             return 2;
         }
 
-        return 3;
+        if (_result.Summary.MacroCount > 0)
+        {
+            return 3;
+        }
+
+        return 0;
     }
 
     private async Task<FileMetadata?> TryReadMetadataAsync(IBrowserFile? file)
@@ -372,6 +365,7 @@
             _sheetFilter = AllFilter;
             _kindFilter = AllFilter;
             _keyword = string.Empty;
+            _activeTab = FirstNonEmptyTab();
             Snackbar.Add($"比較が完了しました。差分 {_result.Summary.Total:N0} 件", Severity.Success);
         }
         catch (InvalidOperationException ex)
@@ -432,10 +426,11 @@
 
     private Func<DiffCategory, bool> ActiveCategory() => _activeTab switch
     {
-        0 => category => category == DiffCategory.Structure,
-        1 => category => category is DiffCategory.Cell or DiffCategory.Formatting,
-        2 => category => category == DiffCategory.Macro,
-        _ => category => category == DiffCategory.Metadata
+        0 => category => category is DiffCategory.Cell or DiffCategory.Metadata,
+        1 => category => category == DiffCategory.Formatting,
+        2 => category => category == DiffCategory.Structure,
+        3 => category => category == DiffCategory.Macro,
+        _ => category => true
     };
 
     private bool ContainsKeyword(DiffRecord record)
@@ -584,11 +579,11 @@
 
     private static string CategoryLabel(DiffCategory category) => category switch
     {
-        DiffCategory.Structure => "シート構成",
-        DiffCategory.Cell => "セル詳細",
+        DiffCategory.Structure => "ファイル構成",
+        DiffCategory.Cell => "データ",
         DiffCategory.Formatting => "書式",
         DiffCategory.Macro => "マクロ",
-        DiffCategory.Metadata => "その他メタデータ",
+        DiffCategory.Metadata => "名前定義",
         _ => category.ToString()
     };
 

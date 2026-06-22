@@ -85,6 +85,14 @@ h1:focus {
     object-fit: contain;
 }
 
+.site-footer {
+    margin-top: 32px;
+    padding-top: 20px;
+    border-top: 1px solid #d9e0ea;
+    color: #64748b;
+    font-size: 0.9rem;
+}
+
 .lead-copy {
     max-width: 760px;
     margin-bottom: 0;
@@ -150,14 +158,6 @@ h1:focus {
     background: #e7f7ee;
     color: #12613a;
     font-weight: 900;
-}
-
-.upload-hint {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    margin: 20px 0 16px;
-    color: #475569;
 }
 
 .upload-action-text {
