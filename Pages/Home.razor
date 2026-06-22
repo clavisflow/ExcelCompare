@@ -27,7 +27,7 @@
 
         <MudGrid Spacing="3">
             <MudItem xs="12" md="6">
-                <MudFileUpload T="IBrowserFile" Accept=".xlsx,.xlsm" MaxFileSize="@ExcelDiffService.MaxFileSize" FilesChanged="OnSourceFileChanged">
+                <MudFileUpload T="IBrowserFile" Files="_sourceFile" Accept=".xlsx,.xlsm" MaxFileSize="@ExcelDiffService.MaxFileSize" FilesChanged="OnSourceFileChanged">
                     <CustomContent Context="picker">
                         <MudPaper Class="upload-zone clickable-upload" Elevation="0" @onclick="@picker.OpenFilePickerAsync" role="button" tabindex="0">
                             <div class="upload-heading">
@@ -37,19 +37,22 @@
                                     <MudText Typo="Typo.body2">変更前または基準にするExcelを選択</MudText>
                                 </div>
                             </div>
-                            <MudStack AlignItems="AlignItems.Center" Justify="Justify.Center" Class="upload-content">
+                            <div class="upload-hint">
                                 <MudIcon Icon="@Icons.Material.Filled.UploadFile" Size="Size.Large" />
-                                <MudText Typo="Typo.subtitle1" Class="upload-action-text">クリックして比較元を選択</MudText>
-                                <MudText Typo="Typo.caption">最大10MB / .xlsx .xlsm</MudText>
-                            </MudStack>
-                            @RenderMetadata(_sourceMetadata)
+                                <div>
+                                    <MudText Typo="Typo.subtitle1" Class="upload-action-text">パネルをクリックして選択</MudText>
+                                    <MudText Typo="Typo.caption">最大10MB / .xlsx .xlsm</MudText>
+                                </div>
+                            </div>
+                            @RenderMetadata(_sourceMetadata, ClearSourceFile)
                         </MudPaper>
                     </CustomContent>
+                    <SelectedTemplate></SelectedTemplate>
                 </MudFileUpload>
             </MudItem>
 
             <MudItem xs="12" md="6">
-                <MudFileUpload T="IBrowserFile" Accept=".xlsx,.xlsm" MaxFileSize="@ExcelDiffService.MaxFileSize" FilesChanged="OnTargetFileChanged">
+                <MudFileUpload T="IBrowserFile" Files="_targetFile" Accept=".xlsx,.xlsm" MaxFileSize="@ExcelDiffService.MaxFileSize" FilesChanged="OnTargetFileChanged">
                     <CustomContent Context="picker">
                         <MudPaper Class="upload-zone clickable-upload" Elevation="0" @onclick="@picker.OpenFilePickerAsync" role="button" tabindex="0">
                             <div class="upload-heading">
@@ -59,14 +62,17 @@
                                     <MudText Typo="Typo.body2">変更後または確認対象のExcelを選択</MudText>
                                 </div>
                             </div>
-                            <MudStack AlignItems="AlignItems.Center" Justify="Justify.Center" Class="upload-content">
+                            <div class="upload-hint">
                                 <MudIcon Icon="@Icons.Material.Filled.UploadFile" Size="Size.Large" />
-                                <MudText Typo="Typo.subtitle1" Class="upload-action-text">クリックして比較先を選択</MudText>
-                                <MudText Typo="Typo.caption">最大10MB / .xlsx .xlsm</MudText>
-                            </MudStack>
-                            @RenderMetadata(_targetMetadata)
+                                <div>
+                                    <MudText Typo="Typo.subtitle1" Class="upload-action-text">パネルをクリックして選択</MudText>
+                                    <MudText Typo="Typo.caption">最大10MB / .xlsx .xlsm</MudText>
+                                </div>
+                            </div>
+                            @RenderMetadata(_targetMetadata, ClearTargetFile)
                         </MudPaper>
                     </CustomContent>
+                    <SelectedTemplate></SelectedTemplate>
                 </MudFileUpload>
             </MudItem>
         </MudGrid>
@@ -117,11 +123,11 @@
         @if (_result is not null)
         {
             <MudGrid Spacing="2">
-                @SummaryCard("合計", _result.Summary.Total, Icons.Material.Filled.Summarize, Color.Primary)
-                @SummaryCard("シート構成", _result.Summary.StructureCount, Icons.Material.Filled.AccountTree, Color.Secondary)
-                @SummaryCard("セル詳細", _result.Summary.CellCount + _result.Summary.FormattingCount, Icons.Material.Filled.GridOn, Color.Info)
-                @SummaryCard("マクロ", _result.Summary.MacroCount, Icons.Material.Filled.Code, Color.Warning)
-                @SummaryCard("メタデータ", _result.Summary.MetadataCount, Icons.Material.Filled.Label, Color.Tertiary)
+                @SummaryCard("合計", _result.Summary.Total, Icons.Material.Filled.Summarize, Color.Primary, -1)
+                @SummaryCard("シート構成", _result.Summary.StructureCount, Icons.Material.Filled.AccountTree, Color.Secondary, 0)
+                @SummaryCard("セル詳細", _result.Summary.CellCount + _result.Summary.FormattingCount, Icons.Material.Filled.GridOn, Color.Info, 1)
+                @SummaryCard("マクロ", _result.Summary.MacroCount, Icons.Material.Filled.Code, Color.Warning, 2)
+                @SummaryCard("メタデータ", _result.Summary.MetadataCount, Icons.Material.Filled.Label, Color.Tertiary, 3)
             </MudGrid>
 
             <MudPaper Class="result-panel" Elevation="0">
@@ -259,6 +265,55 @@
     {
         _targetFile = file;
         _targetMetadata = await TryReadMetadataAsync(file);
+    }
+
+    private void ClearSourceFile()
+    {
+        _sourceFile = null;
+        _sourceMetadata = null;
+        _result = null;
+    }
+
+    private void ClearTargetFile()
+    {
+        _targetFile = null;
+        _targetMetadata = null;
+        _result = null;
+    }
+
+    private void SelectSummaryTab(int tabIndex)
+    {
+        if (_result is null)
+        {
+            return;
+        }
+
+        _activeTab = tabIndex >= 0 ? tabIndex : FirstNonEmptyTab();
+    }
+
+    private int FirstNonEmptyTab()
+    {
+        if (_result is null)
+        {
+            return 0;
+        }
+
+        if (_result.Summary.StructureCount > 0)
+        {
+            return 0;
+        }
+
+        if (_result.Summary.CellCount + _result.Summary.FormattingCount > 0)
+        {
+            return 1;
+        }
+
+        if (_result.Summary.MacroCount > 0)
+        {
+            return 2;
+        }
+
+        return 3;
     }
 
     private async Task<FileMetadata?> TryReadMetadataAsync(IBrowserFile? file)
@@ -442,7 +497,7 @@
             <small>@style.NumberFormat</small>
         </div>;
 
-    private RenderFragment RenderMetadata(FileMetadata? metadata) => builder =>
+    private RenderFragment RenderMetadata(FileMetadata? metadata, Action clearFile) => builder =>
     {
         if (metadata is null)
         {
@@ -456,16 +511,28 @@
 
         builder.OpenElement(5, "div");
         builder.AddAttribute(6, "class", "file-meta");
-        builder.AddContent(7, metadata.FileName);
-        builder.OpenElement(8, "span");
-        builder.AddContent(9, $"{FormatBytes(metadata.SizeBytes)} / {metadata.SheetCount} sheets / {(metadata.HasMacro ? "macro" : "no macro")}");
+        builder.OpenElement(7, "div");
+        builder.AddAttribute(8, "class", "file-meta-main");
+        builder.OpenElement(9, "strong");
+        builder.AddContent(10, metadata.FileName);
         builder.CloseElement();
+        builder.OpenElement(11, "span");
+        builder.AddContent(12, $"{FormatBytes(metadata.SizeBytes)} / {metadata.SheetCount} sheets / {(metadata.HasMacro ? "macro" : "no macro")}");
+        builder.CloseElement();
+        builder.CloseElement();
+        builder.OpenComponent<MudIconButton>(13);
+        builder.AddAttribute(14, "Icon", Icons.Material.Filled.Close);
+        builder.AddAttribute(15, "Size", Size.Small);
+        builder.AddAttribute(16, "Color", Color.Default);
+        builder.AddAttribute(17, "OnClick", EventCallback.Factory.Create<MouseEventArgs>(this, clearFile));
+        builder.AddEventStopPropagationAttribute(18, "onclick", true);
+        builder.CloseComponent();
         builder.CloseElement();
     };
 
-    private RenderFragment SummaryCard(string label, int value, string icon, Color color) =>
+    private RenderFragment SummaryCard(string label, int value, string icon, Color color, int tabIndex) =>
         @<MudItem xs="12" sm="6" md="2">
-            <MudPaper Class="summary-card" Elevation="0">
+            <MudPaper Class="summary-card clickable-summary" Elevation="0" @onclick="@(() => SelectSummaryTab(tabIndex))" role="button" tabindex="0">
                 <MudIcon Icon="@icon" Color="@color" />
                 <MudText Typo="Typo.caption">@label</MudText>
                 <MudText Typo="Typo.h5">@value.ToString("N0")</MudText>
