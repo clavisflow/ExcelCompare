@@ -253,6 +253,28 @@ h1:focus {
     margin-top: 12px;
 }
 
+.empty-result {
+    display: flex;
+    align-items: flex-start;
+    gap: 12px;
+    margin-top: 14px;
+    border: 1px solid #d9e0ea;
+    border-radius: 8px;
+    padding: 16px;
+    background: #f8fafc;
+}
+
+.empty-result strong {
+    display: block;
+    margin-bottom: 4px;
+    color: #111827;
+}
+
+.empty-result p {
+    margin: 0;
+    color: #64748b;
+}
+
 .diff-grid .mud-table-cell {
     max-width: 340px;
     overflow-wrap: anywhere;
@@ -351,6 +373,13 @@ h1:focus {
     font-size: 0.82rem;
     line-height: 1.55;
     white-space: pre-wrap;
+}
+
+.macro-preview pre {
+    background: #0f172a;
+    color: #dbeafe;
+    font-family: Consolas, "Cascadia Mono", "Yu Gothic UI", monospace;
+    tab-size: 4;
 }
 
 .preview-block em {

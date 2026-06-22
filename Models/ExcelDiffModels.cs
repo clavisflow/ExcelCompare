@@ -58,8 +58,10 @@ public sealed record DiffSummary(
 public sealed record CompareResult(
     FileMetadata Source,
     FileMetadata Target,
+    ComparisonOptions Options,
     DiffSummary Summary,
-    IReadOnlyList<DiffRecord> Records);
+    IReadOnlyList<DiffRecord> Records,
+    IReadOnlyList<DiffRecord> DisplayRecords);
 
 internal sealed record WorkbookSnapshot(
     FileMetadata Metadata,
@@ -82,7 +84,8 @@ internal sealed record SheetSnapshot(
     IReadOnlyList<string> HiddenRows,
     IReadOnlyList<string> HiddenColumns,
     IReadOnlyList<string> DataValidations,
-    string ProtectionSignature);
+    string ProtectionSignature,
+    string ProtectionSummary);
 
 internal sealed record CellSnapshot(
     string Address,

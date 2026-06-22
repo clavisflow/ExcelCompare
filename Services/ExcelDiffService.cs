@@ -13,8 +13,11 @@ public sealed class ExcelDiffService
 {
     public const long MaxFileSize = 10 * 1024 * 1024;
 
-    private const int ShiftLookAhead = 24;
+    private const int MinShiftLookAhead = 24;
+    private const int MaxShiftLookAhead = 160;
     private const int MaxPerShiftBlock = 250;
+    private const int MaxDetailedRecordsPerGroup = 300;
+    private const int MaxDisplayRecordsPerCategory = 3000;
     private const int MaxMacroLineDiffsPerModule = 200;
 
     public async Task<FileMetadata> ReadMetadataAsync(IBrowserFile file)
@@ -97,9 +100,84 @@ public sealed class ExcelDiffService
             records.Count(row => row.Category == DiffCategory.Macro),
             records.Count(row => row.Category == DiffCategory.Metadata));
 
+        var displayRecords = CompactDisplayRecords(records);
+
         progress?.Report(new("完了", 100));
-        return new CompareResult(source.Metadata, target.Metadata, summary, records);
+        return new CompareResult(source.Metadata, target.Metadata, options, summary, records, displayRecords);
     }
+
+    private static IReadOnlyList<DiffRecord> CompactDisplayRecords(IReadOnlyList<DiffRecord> records)
+    {
+        var compacted = new List<DiffRecord>(Math.Min(records.Count, 4096));
+        var grouped = records
+            .Select((record, index) => new { record, index })
+            .GroupBy(
+                item => (item.record.Category, item.record.Kind, item.record.SheetName, item.record.Item),
+                item => item,
+                EqualityComparer<(DiffCategory, DiffKind, string, string)>.Default)
+            .OrderBy(group => group.Min(item => item.index));
+
+        foreach (var group in grouped)
+        {
+            var entries = group.OrderBy(item => item.index).Select(item => item.record).ToList();
+            if (entries.Count <= MaxDetailedRecordsPerGroup || group.Key.Item1 == DiffCategory.Macro)
+            {
+                compacted.AddRange(entries);
+                continue;
+            }
+
+            compacted.AddRange(entries.Take(MaxDetailedRecordsPerGroup));
+            var omitted = entries.Count - MaxDetailedRecordsPerGroup;
+            compacted.Add(new(
+                group.Key.Item1,
+                group.Key.Item2,
+                group.Key.Item3,
+                string.Empty,
+                $"{group.Key.Item4} サマリー",
+                string.Empty,
+                string.Empty,
+                $"{entries.Count:N0}件のうち先頭 {MaxDetailedRecordsPerGroup:N0} 件のみ表示しています。残り {omitted:N0} 件はCSV出力または絞り込みで確認してください。"));
+        }
+
+        return LimitDisplayRecordsPerCategory(compacted);
+    }
+
+    private static IReadOnlyList<DiffRecord> LimitDisplayRecordsPerCategory(IReadOnlyList<DiffRecord> records)
+    {
+        var limited = new List<DiffRecord>(Math.Min(records.Count, MaxDisplayRecordsPerCategory * 4));
+        foreach (var group in records.GroupBy(record => record.Category).OrderBy(group => group.Key))
+        {
+            if (group.Key == DiffCategory.Macro || group.Count() <= MaxDisplayRecordsPerCategory)
+            {
+                limited.AddRange(group);
+                continue;
+            }
+
+            var visible = group.Take(MaxDisplayRecordsPerCategory).ToList();
+            limited.AddRange(visible);
+            limited.Add(new(
+                group.Key,
+                DiffKind.Changed,
+                string.Empty,
+                string.Empty,
+                "表示上限",
+                string.Empty,
+                string.Empty,
+                $"{CategoryName(group.Key)}の差分が多いため、画面表示は先頭 {MaxDisplayRecordsPerCategory:N0} 件に制限しています。全件はCSV出力で確認してください。"));
+        }
+
+        return limited;
+    }
+
+    private static string CategoryName(DiffCategory category) => category switch
+    {
+        DiffCategory.Structure => "ファイル構成",
+        DiffCategory.Cell => "データ",
+        DiffCategory.Formatting => "書式",
+        DiffCategory.Macro => "マクロ",
+        DiffCategory.Metadata => "名前定義",
+        _ => category.ToString()
+    };
 
     private static async Task<WorkbookSnapshot> ReadWorkbookAsync(IBrowserFile file, bool includeMacroSource)
     {
@@ -240,6 +318,8 @@ public sealed class ExcelDiffService
                 group => BuildColumnSignature(group),
                 EqualityComparer<uint>.Default);
 
+        var sheetProtection = worksheet.Elements<SheetProtection>().FirstOrDefault();
+
         return new SheetSnapshot(
             sheet.Name?.Value ?? "(名称なし)",
             position,
@@ -251,7 +331,8 @@ public sealed class ExcelDiffService
             ReadHiddenRows(worksheet),
             ReadHiddenColumns(worksheet),
             ReadDataValidations(worksheet),
-            worksheet.Elements<SheetProtection>().FirstOrDefault()?.OuterXml ?? string.Empty);
+            sheetProtection?.OuterXml ?? string.Empty,
+            ReadProtectionSummary(sheetProtection));
     }
 
     private static string ReadCellValue(Cell cell, IReadOnlyList<string> sharedStrings)
@@ -434,7 +515,7 @@ public sealed class ExcelDiffService
             var right = target.SheetsByName[name];
             AddStructureChange(records, name, "シート順", left.Position.ToString(CultureInfo.InvariantCulture), right.Position.ToString(CultureInfo.InvariantCulture));
             AddStructureChange(records, name, "シート非表示状態", left.State, right.State);
-            AddStructureChange(records, name, "シート保護", ShortHash(left.ProtectionSignature), ShortHash(right.ProtectionSignature));
+            AddStructureChange(records, name, "シート保護", left.ProtectionSummary, right.ProtectionSummary, left.ProtectionSignature, right.ProtectionSignature);
             CompareStringSets(records, name, "非表示行", left.HiddenRows, right.HiddenRows);
             CompareStringSets(records, name, "非表示列", left.HiddenColumns, right.HiddenColumns);
             CompareStringSets(records, name, "入力規則", left.DataValidations, right.DataValidations);
@@ -449,6 +530,7 @@ public sealed class ExcelDiffService
         SheetSnapshot target)
     {
         var matchedTargets = new HashSet<uint>();
+        var removedColumns = new List<uint>();
         foreach (var sourceColumn in source.ColumnSignatures.Keys.Order())
         {
             var sourceSignature = source.ColumnSignatures[sourceColumn];
@@ -485,18 +567,11 @@ public sealed class ExcelDiffService
             }
             else if (!target.ColumnSignatures.Values.Contains(sourceSignature, StringComparer.Ordinal))
             {
-                records.Add(new(
-                    DiffCategory.Structure,
-                    DiffKind.Removed,
-                    sheetName,
-                    ColumnName(sourceColumn),
-                    "列",
-                    ColumnName(sourceColumn),
-                    string.Empty,
-                    "比較先で列内容が削除された可能性があります。"));
+                removedColumns.Add(sourceColumn);
             }
         }
 
+        var addedColumns = new List<uint>();
         foreach (var targetColumn in target.ColumnSignatures.Keys.Order())
         {
             if (matchedTargets.Contains(targetColumn))
@@ -507,17 +582,74 @@ public sealed class ExcelDiffService
             var signature = target.ColumnSignatures[targetColumn];
             if (!string.IsNullOrEmpty(signature) && !source.ColumnSignatures.Values.Contains(signature, StringComparer.Ordinal))
             {
-                records.Add(new(
-                    DiffCategory.Structure,
-                    DiffKind.Added,
-                    sheetName,
-                    ColumnName(targetColumn),
-                    "列",
-                    string.Empty,
-                    ColumnName(targetColumn),
-                    "比較先で列内容が追加された可能性があります。"));
+                addedColumns.Add(targetColumn);
             }
         }
+
+        AddColumnSummary(records, DiffKind.Removed, sheetName, removedColumns);
+        AddColumnSummary(records, DiffKind.Added, sheetName, addedColumns);
+    }
+
+    private static void AddColumnSummary(ICollection<DiffRecord> records, DiffKind kind, string sheetName, IReadOnlyList<uint> columns)
+    {
+        if (columns.Count == 0)
+        {
+            return;
+        }
+
+        if (columns.Count <= 12)
+        {
+            foreach (var column in columns)
+            {
+                records.Add(new(
+                    DiffCategory.Structure,
+                    kind,
+                    sheetName,
+                    ColumnName(column),
+                    "列",
+                    kind == DiffKind.Removed ? ColumnName(column) : string.Empty,
+                    kind == DiffKind.Added ? ColumnName(column) : string.Empty,
+                    kind == DiffKind.Added ? "比較先で列内容が追加された可能性があります。" : "比較先で列内容が削除された可能性があります。"));
+            }
+
+            return;
+        }
+
+        var ranges = FormatColumnRanges(columns);
+        records.Add(new(
+            DiffCategory.Structure,
+            kind,
+            sheetName,
+            ranges,
+            "列ブロック",
+            kind == DiffKind.Removed ? ranges : string.Empty,
+            kind == DiffKind.Added ? ranges : string.Empty,
+            kind == DiffKind.Added
+                ? $"{columns.Count:N0}列の追加候補をまとめて表示しています。"
+                : $"{columns.Count:N0}列の削除候補をまとめて表示しています。"));
+    }
+
+    private static string FormatColumnRanges(IReadOnlyList<uint> columns)
+    {
+        var ordered = columns.Order().ToList();
+        var ranges = new List<string>();
+        var start = ordered[0];
+        var previous = start;
+
+        foreach (var column in ordered.Skip(1))
+        {
+            if (column == previous + 1)
+            {
+                previous = column;
+                continue;
+            }
+
+            ranges.Add(start == previous ? ColumnName(start) : $"{ColumnName(start)}:{ColumnName(previous)}");
+            start = previous = column;
+        }
+
+        ranges.Add(start == previous ? ColumnName(start) : $"{ColumnName(start)}:{ColumnName(previous)}");
+        return string.Join(", ", ranges);
     }
 
     private static void CompareSheets(
@@ -526,11 +658,27 @@ public sealed class ExcelDiffService
         ComparisonOptions options,
         ICollection<DiffRecord> records)
     {
+        var comparedTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var sheetName in source.SheetsByName.Keys.Intersect(target.SheetsByName.Keys, StringComparer.OrdinalIgnoreCase))
         {
             var left = source.SheetsByName[sheetName];
             var right = target.SheetsByName[sheetName];
             CompareSheetCells(left, right, options, records);
+            comparedTargets.Add(right.Name);
+        }
+
+        var sourceNames = source.SheetsByName.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var targetNames = target.SheetsByName.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var removed = sourceNames.Except(targetNames, StringComparer.OrdinalIgnoreCase).ToList();
+        var added = targetNames.Except(sourceNames, StringComparer.OrdinalIgnoreCase).ToList();
+        foreach (var (sourceName, targetName) in MatchRenamedSheets(source, target, removed, added))
+        {
+            if (!comparedTargets.Add(targetName))
+            {
+                continue;
+            }
+
+            CompareSheetCells(source.SheetsByName[sourceName], target.SheetsByName[targetName], options, records);
         }
     }
 
@@ -685,7 +833,7 @@ public sealed class ExcelDiffService
 
     private static int FindMatchingCell(CellSnapshot needle, IReadOnlyList<CellSnapshot> cells, int startIndex)
     {
-        var max = Math.Min(cells.Count, startIndex + ShiftLookAhead);
+        var max = Math.Min(cells.Count, startIndex + ShiftLookAheadFor(cells.Count));
         for (var index = startIndex; index < max; index++)
         {
             if (SameCellIdentity(needle, cells[index]))
@@ -762,6 +910,20 @@ public sealed class ExcelDiffService
             return;
         }
 
+        if ((source.Macro.HasMacro && !source.Macro.SourceCodeParsed) ||
+            (target.Macro.HasMacro && !target.Macro.SourceCodeParsed))
+        {
+            records.Add(new(
+                DiffCategory.Macro,
+                DiffKind.Changed,
+                string.Empty,
+                string.Empty,
+                "VBA解析",
+                source.Macro.SourceCodeParsed ? "コード抽出済み" : "コード未抽出",
+                target.Macro.SourceCodeParsed ? "コード抽出済み" : "コード未抽出",
+                "VBAプロジェクトが保護されているか、コード抽出に失敗した可能性があります。"));
+        }
+
         if (source.Macro.IsPasswordProtected != target.Macro.IsPasswordProtected)
         {
             records.Add(new(DiffCategory.Macro, DiffKind.Changed, string.Empty, string.Empty, "VBA保護", source.Macro.IsPasswordProtected ? "あり" : "なし", target.Macro.IsPasswordProtected ? "あり" : "なし", "VBAプロジェクト保護の痕跡が変わりました。"));
@@ -809,7 +971,10 @@ public sealed class ExcelDiffService
             if (!left.SourceText.Equals(right.SourceText, StringComparison.Ordinal))
             {
                 var changedLines = CountChangedLines(left.SourceText, right.SourceText);
-                records.Add(new(DiffCategory.Macro, DiffKind.Changed, string.Empty, string.Empty, name, $"{left.LineCount}行", $"{right.LineCount}行", $"コードが変更されました。変更行数目安: {changedLines:N0}行"));
+                var detail = changedLines > MaxMacroLineDiffsPerModule
+                    ? $"コードが大きく変更されました。変更行数目安: {changedLines:N0}行。行差分は先頭 {MaxMacroLineDiffsPerModule:N0} 件のみ表示します。"
+                    : $"コードが変更されました。変更行数目安: {changedLines:N0}行";
+                records.Add(new(DiffCategory.Macro, DiffKind.Changed, string.Empty, string.Empty, name, $"{left.LineCount}行", $"{right.LineCount}行", detail));
                 AddMacroLineDiffs(records, name, left.SourceText, right.SourceText);
             }
         }
@@ -836,11 +1001,28 @@ public sealed class ExcelDiffService
         }
     }
 
-    private static void AddStructureChange(ICollection<DiffRecord> records, string sheet, string item, string source, string target)
+    private static void AddStructureChange(
+        ICollection<DiffRecord> records,
+        string sheet,
+        string item,
+        string source,
+        string target,
+        string sourcePreview = "",
+        string targetPreview = "")
     {
         if (!string.Equals(source, target, StringComparison.Ordinal))
         {
-            records.Add(new(DiffCategory.Structure, DiffKind.Changed, sheet, string.Empty, item, source, target, $"{item}が変更されました。"));
+            records.Add(new(
+                DiffCategory.Structure,
+                DiffKind.Changed,
+                sheet,
+                string.Empty,
+                item,
+                source,
+                target,
+                $"{item}が変更されました。",
+                sourcePreview,
+                targetPreview));
         }
     }
 
@@ -889,16 +1071,56 @@ public sealed class ExcelDiffService
             return -1;
         }
 
-        var max = Math.Min(rows.Count, startIndex + ShiftLookAhead);
+        var max = Math.Min(rows.Count, startIndex + ShiftLookAheadFor(rows.Count));
+        var bestIndex = -1;
+        var bestScore = 0d;
         for (var index = startIndex; index < max; index++)
         {
-            if (signatures.GetValueOrDefault(rows[index], string.Empty) == signature)
+            var candidate = signatures.GetValueOrDefault(rows[index], string.Empty);
+            if (candidate == signature)
             {
                 return index;
             }
+
+            var score = SignatureSimilarity(signature, candidate);
+            if (score > bestScore)
+            {
+                bestScore = score;
+                bestIndex = index;
+            }
         }
 
-        return -1;
+        return bestScore >= 0.82d ? bestIndex : -1;
+    }
+
+    private static int ShiftLookAheadFor(int itemCount)
+    {
+        if (itemCount <= 0)
+        {
+            return MinShiftLookAhead;
+        }
+
+        return Math.Clamp(itemCount / 20, MinShiftLookAhead, MaxShiftLookAhead);
+    }
+
+    private static double SignatureSimilarity(string left, string right)
+    {
+        if (string.IsNullOrEmpty(left) || string.IsNullOrEmpty(right))
+        {
+            return 0;
+        }
+
+        var leftParts = left.Split('\u001f', StringSplitOptions.RemoveEmptyEntries);
+        var rightParts = right.Split('\u001f', StringSplitOptions.RemoveEmptyEntries);
+        if (leftParts.Length == 0 || rightParts.Length == 0)
+        {
+            return 0;
+        }
+
+        var leftSet = leftParts.ToHashSet(StringComparer.Ordinal);
+        var rightSet = rightParts.ToHashSet(StringComparer.Ordinal);
+        var intersection = leftSet.Intersect(rightSet, StringComparer.Ordinal).Count();
+        return (double)intersection / Math.Max(leftSet.Count, rightSet.Count);
     }
 
     private static void AddRowBlock(
@@ -1039,10 +1261,79 @@ public sealed class ExcelDiffService
     private static IReadOnlyList<string> ReadDataValidations(Worksheet worksheet)
     {
         return worksheet.Descendants<DataValidation>()
-            .Select(validation =>
-                $"{validation.SequenceOfReferences?.InnerText}|{validation.Type?.Value}|{validation.Operator?.Value}|{validation.Formula1?.Text}|{validation.Formula2?.Text}")
+            .Select(FormatDataValidation)
             .Order(StringComparer.Ordinal)
             .ToList();
+    }
+
+    private static string FormatDataValidation(DataValidation validation)
+    {
+        var range = validation.SequenceOfReferences?.InnerText;
+        var type = validation.Type?.Value.ToString();
+        var op = validation.Operator?.Value.ToString();
+        var formula1 = validation.Formula1?.Text;
+        var formula2 = validation.Formula2?.Text;
+
+        var builder = new StringBuilder();
+        builder.Append(string.IsNullOrWhiteSpace(range) ? "(範囲なし)" : range);
+        builder.Append(" / 種類:");
+        builder.Append(string.IsNullOrWhiteSpace(type) ? "指定なし" : type);
+
+        if (!string.IsNullOrWhiteSpace(op))
+        {
+            builder.Append(" / 条件:");
+            builder.Append(op);
+        }
+
+        if (!string.IsNullOrWhiteSpace(formula1))
+        {
+            builder.Append(" / 式1:");
+            builder.Append(formula1);
+        }
+
+        if (!string.IsNullOrWhiteSpace(formula2))
+        {
+            builder.Append(" / 式2:");
+            builder.Append(formula2);
+        }
+
+        return builder.ToString();
+    }
+
+    private static string ReadProtectionSummary(SheetProtection? protection)
+    {
+        if (protection is null)
+        {
+            return "保護なし";
+        }
+
+        var restrictions = new List<string>();
+        AddRestriction(restrictions, protection.SelectLockedCells, "ロックセル選択");
+        AddRestriction(restrictions, protection.SelectUnlockedCells, "非ロックセル選択");
+        AddRestriction(restrictions, protection.FormatCells, "セル書式");
+        AddRestriction(restrictions, protection.FormatColumns, "列書式");
+        AddRestriction(restrictions, protection.FormatRows, "行書式");
+        AddRestriction(restrictions, protection.InsertColumns, "列挿入");
+        AddRestriction(restrictions, protection.InsertRows, "行挿入");
+        AddRestriction(restrictions, protection.DeleteColumns, "列削除");
+        AddRestriction(restrictions, protection.DeleteRows, "行削除");
+        AddRestriction(restrictions, protection.Sort, "並べ替え");
+        AddRestriction(restrictions, protection.AutoFilter, "フィルター");
+        AddRestriction(restrictions, protection.PivotTables, "ピボット");
+        AddRestriction(restrictions, protection.Objects, "オブジェクト");
+        AddRestriction(restrictions, protection.Scenarios, "シナリオ");
+
+        return restrictions.Count == 0
+            ? "保護あり"
+            : $"保護あり / 制限:{string.Join(", ", restrictions)}";
+    }
+
+    private static void AddRestriction(ICollection<string> restrictions, BooleanValue? value, string label)
+    {
+        if (value?.Value == true)
+        {
+            restrictions.Add(label);
+        }
     }
 
     private static (uint Column, uint Row) ParseCellReference(ReadOnlySpan<char> reference)
@@ -1125,7 +1416,7 @@ public sealed class ExcelDiffService
                 j < targetLines.Length &&
                 sourceLines[i + 1].Equals(targetLines[j], StringComparison.Ordinal))
             {
-                records.Add(MacroLineRecord(moduleName, DiffKind.Removed, i + 1, null, sourceLines[i], string.Empty));
+                records.Add(MacroLineRecord(moduleName, DiffKind.Removed, i + 1, null, sourceLines[i], string.Empty, sourceLines, targetLines));
                 i++;
                 emitted++;
                 continue;
@@ -1135,7 +1426,7 @@ public sealed class ExcelDiffService
                 i < sourceLines.Length &&
                 sourceLines[i].Equals(targetLines[j + 1], StringComparison.Ordinal))
             {
-                records.Add(MacroLineRecord(moduleName, DiffKind.Added, null, j + 1, string.Empty, targetLines[j]));
+                records.Add(MacroLineRecord(moduleName, DiffKind.Added, null, j + 1, string.Empty, targetLines[j], sourceLines, targetLines));
                 j++;
                 emitted++;
                 continue;
@@ -1143,7 +1434,7 @@ public sealed class ExcelDiffService
 
             if (i < sourceLines.Length && j < targetLines.Length)
             {
-                records.Add(MacroLineRecord(moduleName, DiffKind.Changed, i + 1, j + 1, sourceLines[i], targetLines[j]));
+                records.Add(MacroLineRecord(moduleName, DiffKind.Changed, i + 1, j + 1, sourceLines[i], targetLines[j], sourceLines, targetLines));
                 i++;
                 j++;
                 emitted++;
@@ -1152,13 +1443,13 @@ public sealed class ExcelDiffService
 
             if (i < sourceLines.Length)
             {
-                records.Add(MacroLineRecord(moduleName, DiffKind.Removed, i + 1, null, sourceLines[i], string.Empty));
+                records.Add(MacroLineRecord(moduleName, DiffKind.Removed, i + 1, null, sourceLines[i], string.Empty, sourceLines, targetLines));
                 i++;
                 emitted++;
                 continue;
             }
 
-            records.Add(MacroLineRecord(moduleName, DiffKind.Added, null, j + 1, string.Empty, targetLines[j]));
+            records.Add(MacroLineRecord(moduleName, DiffKind.Added, null, j + 1, string.Empty, targetLines[j], sourceLines, targetLines));
             j++;
             emitted++;
         }
@@ -1183,7 +1474,9 @@ public sealed class ExcelDiffService
         int? sourceLine,
         int? targetLine,
         string source,
-        string target)
+        string target,
+        IReadOnlyList<string> sourceLines,
+        IReadOnlyList<string> targetLines)
     {
         var address = (sourceLine, targetLine) switch
         {
@@ -1202,8 +1495,35 @@ public sealed class ExcelDiffService
             Shorten(source),
             Shorten(target),
             "VBAコード行の差分です。",
-            source,
-            target);
+            BuildMacroContext(sourceLines, sourceLine),
+            BuildMacroContext(targetLines, targetLine));
+    }
+
+    private static string BuildMacroContext(IReadOnlyList<string> lines, int? oneBasedLine)
+    {
+        const int contextLines = 2;
+        if (oneBasedLine is null || oneBasedLine < 1 || oneBasedLine > lines.Count)
+        {
+            return string.Empty;
+        }
+
+        var center = oneBasedLine.Value - 1;
+        var start = Math.Max(0, center - contextLines);
+        var end = Math.Min(lines.Count - 1, center + contextLines);
+        var builder = new StringBuilder();
+
+        for (var index = start; index <= end; index++)
+        {
+            if (builder.Length > 0)
+            {
+                builder.AppendLine();
+            }
+
+            var marker = index == center ? ">" : " ";
+            builder.Append(CultureInfo.InvariantCulture, $"{marker} {index + 1,4}: {lines[index]}");
+        }
+
+        return builder.ToString();
     }
 
     private static string PreviewCode(string text)

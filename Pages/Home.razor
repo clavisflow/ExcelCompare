@@ -116,10 +116,10 @@
 
             <MudPaper Class="result-panel" Elevation="0">
                 <MudGrid Spacing="2">
-                    <MudItem xs="12" md="4">
+                    <MudItem xs="12" md="3">
                         <MudTextField @bind-Value="_keyword" Label="キーワード検索" Variant="Variant.Outlined" Margin="Margin.Dense" Adornment="Adornment.Start" AdornmentIcon="@Icons.Material.Filled.Search" Clearable="true" />
                     </MudItem>
-                    <MudItem xs="12" sm="6" md="3">
+                    <MudItem xs="12" sm="6" md="2">
                         <MudSelect T="string" @bind-Value="_sheetFilter" Label="シート名" Variant="Variant.Outlined" Margin="Margin.Dense">
                             <MudSelectItem T="string" Value="@AllFilter">すべて</MudSelectItem>
                             @foreach (var sheet in SheetOptions)
@@ -128,7 +128,7 @@
                             }
                         </MudSelect>
                     </MudItem>
-                    <MudItem xs="12" sm="6" md="3">
+                    <MudItem xs="12" sm="6" md="2">
                         <MudSelect T="string" @bind-Value="_kindFilter" Label="差分種別" Variant="Variant.Outlined" Margin="Margin.Dense">
                             <MudSelectItem T="string" Value="@AllFilter">すべて</MudSelectItem>
                             <MudSelectItem T="string" Value="@DiffKind.Added.ToString()">追加</MudSelectItem>
@@ -137,8 +137,20 @@
                             <MudSelectItem T="string" Value="@DiffKind.Renamed.ToString()">名称変更</MudSelectItem>
                         </MudSelect>
                     </MudItem>
+                    @if (_activeTab == 3)
+                    {
+                        <MudItem xs="12" sm="6" md="3">
+                            <MudSelect T="string" @bind-Value="_moduleFilter" Label="モジュール" Variant="Variant.Outlined" Margin="Margin.Dense">
+                                <MudSelectItem T="string" Value="@AllFilter">すべて</MudSelectItem>
+                                @foreach (var module in MacroModuleOptions)
+                                {
+                                    <MudSelectItem T="string" Value="@module">@module</MudSelectItem>
+                                }
+                            </MudSelect>
+                        </MudItem>
+                    }
                     <MudItem xs="12" md="2">
-                        <MudText Typo="Typo.body2" Align="Align.Right">表示 @FilteredRecords.Count 件</MudText>
+                        <MudText Typo="Typo.body2" Align="Align.Right">表示 @FilteredRecords.Count 件 / 検出 @CurrentTabDetectedCount().ToString("N0") 件</MudText>
                     </MudItem>
                 </MudGrid>
 
@@ -149,61 +161,74 @@
                     <MudTabPanel Text="マクロ" Icon="@Icons.Material.Filled.Code" />
                 </MudTabs>
 
-                <MudDataGrid T="DiffRecord"
-                             Items="@FilteredRecords"
-                             Dense="true"
-                             Hover="true"
-                             Bordered="false"
-                             Striped="true"
-                             Filterable="false"
-                             SortMode="SortMode.Multiple"
-                             RowsPerPage="50"
-                             Class="diff-grid">
-                    <Columns>
-                        <HierarchyColumn T="DiffRecord" EnableHeaderToggle="false" />
-                        <TemplateColumn T="DiffRecord" Title="カテゴリ" SortBy="@(row => row.Category)">
-                            <CellTemplate>@CategoryLabel(context.Item.Category)</CellTemplate>
-                        </TemplateColumn>
-                        <TemplateColumn T="DiffRecord" Title="種別" SortBy="@(row => row.Kind)">
-                            <CellTemplate>
-                                <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@KindColor(context.Item.Kind)">
-                                    @KindLabel(context.Item.Kind)
-                                </MudChip>
-                            </CellTemplate>
-                        </TemplateColumn>
-                        <PropertyColumn T="DiffRecord" TProperty="string" Property="row => row.SheetName" Title="シート" />
-                        <PropertyColumn T="DiffRecord" TProperty="string" Property="row => row.Address" Title="アドレス" />
-                        <PropertyColumn T="DiffRecord" TProperty="string" Property="row => row.Item" Title="項目" />
-                        <TemplateColumn T="DiffRecord" Title="比較元" SortBy="@(row => row.SourceValue)">
-                            <CellTemplate>@RenderValueCell(context.Item, isSource: true)</CellTemplate>
-                        </TemplateColumn>
-                        <TemplateColumn T="DiffRecord" Title="比較先" SortBy="@(row => row.TargetValue)">
-                            <CellTemplate>@RenderValueCell(context.Item, isSource: false)</CellTemplate>
-                        </TemplateColumn>
-                        <PropertyColumn T="DiffRecord" TProperty="string" Property="row => row.Detail" Title="詳細" />
-                    </Columns>
-                    <ChildRowContent>
-                        <div class="diff-detail">
-                            <div>
-                                <span>差分詳細</span>
-                                <p>@context.Item.Detail</p>
-                            </div>
-                            <div class="diff-detail-grid">
-                                <div>
-                                    <strong>比較元</strong>
-                                    @RenderPreviewBlock(context.Item, isSource: true)
-                                </div>
-                                <div>
-                                    <strong>比較先</strong>
-                                    @RenderPreviewBlock(context.Item, isSource: false)
-                                </div>
-                            </div>
+                @if (FilteredRecords.Count == 0)
+                {
+                    <div class="empty-result">
+                        <MudIcon Icon="@Icons.Material.Filled.CheckCircle" Color="Color.Success" />
+                        <div>
+                            <strong>@CurrentEmptyTitle()</strong>
+                            <p>@CurrentEmptyMessage()</p>
                         </div>
-                    </ChildRowContent>
-                    <PagerContent>
-                        <MudDataGridPager T="DiffRecord" PageSizeOptions="@(new[] { 50, 100, 250 })" />
-                    </PagerContent>
-                </MudDataGrid>
+                    </div>
+                }
+                else
+                {
+                    <MudDataGrid T="DiffRecord"
+                                 Items="@FilteredRecords"
+                                 Dense="true"
+                                 Hover="true"
+                                 Bordered="false"
+                                 Striped="true"
+                                 Filterable="false"
+                                 SortMode="SortMode.Multiple"
+                                 RowsPerPage="50"
+                                 Class="diff-grid">
+                        <Columns>
+                            <HierarchyColumn T="DiffRecord" EnableHeaderToggle="false" />
+                            <TemplateColumn T="DiffRecord" Title="カテゴリ" SortBy="@(row => row.Category)">
+                                <CellTemplate>@CategoryLabel(context.Item.Category)</CellTemplate>
+                            </TemplateColumn>
+                            <TemplateColumn T="DiffRecord" Title="種別" SortBy="@(row => row.Kind)">
+                                <CellTemplate>
+                                    <MudChip T="string" Size="Size.Small" Variant="Variant.Outlined" Color="@KindColor(context.Item.Kind)">
+                                        @KindLabel(context.Item.Kind)
+                                    </MudChip>
+                                </CellTemplate>
+                            </TemplateColumn>
+                            <PropertyColumn T="DiffRecord" TProperty="string" Property="row => row.SheetName" Title="シート" />
+                            <PropertyColumn T="DiffRecord" TProperty="string" Property="row => row.Address" Title="アドレス" />
+                            <PropertyColumn T="DiffRecord" TProperty="string" Property="row => row.Item" Title="項目" />
+                            <TemplateColumn T="DiffRecord" Title="比較元" SortBy="@(row => row.SourceValue)">
+                                <CellTemplate>@RenderValueCell(context.Item, isSource: true)</CellTemplate>
+                            </TemplateColumn>
+                            <TemplateColumn T="DiffRecord" Title="比較先" SortBy="@(row => row.TargetValue)">
+                                <CellTemplate>@RenderValueCell(context.Item, isSource: false)</CellTemplate>
+                            </TemplateColumn>
+                            <PropertyColumn T="DiffRecord" TProperty="string" Property="row => row.Detail" Title="詳細" />
+                        </Columns>
+                        <ChildRowContent>
+                            <div class="diff-detail">
+                                <div>
+                                    <span>差分詳細</span>
+                                    <p>@context.Item.Detail</p>
+                                </div>
+                                <div class="diff-detail-grid">
+                                    <div>
+                                        <strong>比較元</strong>
+                                        @RenderPreviewBlock(context.Item, isSource: true)
+                                    </div>
+                                    <div>
+                                        <strong>比較先</strong>
+                                        @RenderPreviewBlock(context.Item, isSource: false)
+                                    </div>
+                                </div>
+                            </div>
+                        </ChildRowContent>
+                        <PagerContent>
+                            <MudDataGridPager T="DiffRecord" PageSizeOptions="@(new[] { 50, 100, 250 })" />
+                        </PagerContent>
+                    </MudDataGrid>
+                }
             </MudPaper>
         }
     </MudStack>
@@ -231,14 +256,24 @@
     private string _progressStatus = string.Empty;
     private string _sheetFilter = AllFilter;
     private string _kindFilter = AllFilter;
+    private string _moduleFilter = AllFilter;
     private string _keyword = string.Empty;
 
-    private List<DiffRecord> FilteredRecords => ApplyFilters().ToList();
+    private List<DiffRecord> FilteredRecords => ApplyFilters(useDisplayRecords: true).ToList();
 
     private IEnumerable<string> SheetOptions => _result is null
         ? Enumerable.Empty<string>()
-        : _result.Records
+        : _result.DisplayRecords
             .Select(record => record.SheetName)
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Order(StringComparer.OrdinalIgnoreCase);
+
+    private IEnumerable<string> MacroModuleOptions => _result is null
+        ? Enumerable.Empty<string>()
+        : _result.DisplayRecords
+            .Where(record => record.Category == DiffCategory.Macro)
+            .Select(MacroModuleName)
             .Where(name => !string.IsNullOrWhiteSpace(name))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .Order(StringComparer.OrdinalIgnoreCase);
@@ -277,6 +312,7 @@
         }
 
         _activeTab = tabIndex >= 0 ? tabIndex : FirstNonEmptyTab();
+        ResetFilters();
     }
 
     private int FirstNonEmptyTab()
@@ -364,6 +400,7 @@
             _result = await DiffService.CompareAsync(_sourceFile, _targetFile, options, progress);
             _sheetFilter = AllFilter;
             _kindFilter = AllFilter;
+            _moduleFilter = AllFilter;
             _keyword = string.Empty;
             _activeTab = FirstNonEmptyTab();
             Snackbar.Add($"比較が完了しました。差分 {_result.Summary.Total:N0} 件", Severity.Success);
@@ -384,7 +421,7 @@
 
     private async Task DownloadCsvAsync()
     {
-        var records = FilteredRecords;
+        var records = ApplyFilters(useDisplayRecords: false).ToList();
         if (records.Count == 0)
         {
             Snackbar.Add("出力対象の差分がありません。", Severity.Info);
@@ -396,7 +433,15 @@
         await JsRuntime.InvokeVoidAsync("excelCompare.downloadBytes", fileName, "text/csv;charset=utf-8", Convert.ToBase64String(bytes));
     }
 
-    private IEnumerable<DiffRecord> ApplyFilters()
+    private void ResetFilters()
+    {
+        _sheetFilter = AllFilter;
+        _kindFilter = AllFilter;
+        _moduleFilter = AllFilter;
+        _keyword = string.Empty;
+    }
+
+    private IEnumerable<DiffRecord> ApplyFilters(bool useDisplayRecords)
     {
         if (_result is null)
         {
@@ -404,7 +449,8 @@
         }
 
         var category = ActiveCategory();
-        var query = _result.Records.Where(record => category(record.Category));
+        var source = useDisplayRecords ? _result.DisplayRecords : _result.Records;
+        var query = source.Where(record => category(record.Category));
 
         if (_sheetFilter != AllFilter)
         {
@@ -414,6 +460,11 @@
         if (_kindFilter != AllFilter && Enum.TryParse<DiffKind>(_kindFilter, out var kind))
         {
             query = query.Where(record => record.Kind == kind);
+        }
+
+        if (_activeTab == 3 && _moduleFilter != AllFilter)
+        {
+            query = query.Where(record => MacroModuleName(record).Equals(_moduleFilter, StringComparison.OrdinalIgnoreCase));
         }
 
         if (!string.IsNullOrWhiteSpace(_keyword))
@@ -432,6 +483,87 @@
         3 => category => category == DiffCategory.Macro,
         _ => category => true
     };
+
+    private string CurrentEmptyTitle()
+    {
+        if (_result is null)
+        {
+            return string.Empty;
+        }
+
+        if (!CurrentTabWasCompared())
+        {
+            return $"{CurrentTabLabel()}は比較対象外です";
+        }
+
+        return HasActiveFilters() ? "条件に一致する差分はありません" : $"{CurrentTabLabel()}の差分はありません";
+    }
+
+    private string CurrentEmptyMessage()
+    {
+        if (_result is null)
+        {
+            return string.Empty;
+        }
+
+        if (!CurrentTabWasCompared())
+        {
+            return "上部の比較対象チェックをONにしてから、もう一度比較してください。";
+        }
+
+        return HasActiveFilters()
+            ? "検索条件、シート名、差分種別、モジュールの絞り込みを変更してください。"
+            : "このカテゴリでは比較元と比較先の差分は検出されませんでした。";
+    }
+
+    private string CurrentTabLabel() => _activeTab switch
+    {
+        0 => "データ",
+        1 => "書式",
+        2 => "ファイル構成",
+        3 => "マクロ",
+        _ => "結果"
+    };
+
+    private bool CurrentTabWasCompared()
+    {
+        if (_result is null)
+        {
+            return false;
+        }
+
+        return _activeTab switch
+        {
+            0 => _result.Options.IncludeData,
+            1 => _result.Options.IncludeFormatting,
+            2 => _result.Options.IncludeStructure,
+            3 => _result.Options.IncludeMacros,
+            _ => true
+        };
+    }
+
+    private bool HasActiveFilters() =>
+        _sheetFilter != AllFilter ||
+        _kindFilter != AllFilter ||
+        (_activeTab == 3 && _moduleFilter != AllFilter) ||
+        !string.IsNullOrWhiteSpace(_keyword);
+
+    private int CurrentTabDetectedCount()
+    {
+        if (_result is null)
+        {
+            return 0;
+        }
+
+        return _activeTab switch
+        {
+            0 => _result.Summary.CellCount + _result.Summary.MetadataCount,
+            1 => _result.Summary.FormattingCount,
+            2 => _result.Summary.StructureCount,
+            3 => _result.Summary.MacroCount,
+            _ => _result.Summary.Total
+        };
+    }
 
     private bool ContainsKeyword(DiffRecord record)
     {
@@ -460,7 +592,7 @@
         var preview = isSource ? record.SourcePreview : record.TargetPreview;
         var value = isSource ? record.SourceValue : record.TargetValue;
 
-        return @<div class="preview-block">
+        return @<div class="@PreviewBlockClass(record)">
             @if (record.Category == DiffCategory.Formatting)
             {
                 @RenderStylePreview(value)
@@ -491,6 +623,9 @@
             <span class="swatch @(fgColor is null ? "swatch-empty" : string.Empty)" style="background:@(fgColor ?? "transparent")"></span>
             <small>@style.NumberFormat</small>
         </div>;
+
+    private static string PreviewBlockClass(DiffRecord record) =>
+        record.Category == DiffCategory.Macro ? "preview-block macro-preview" : "preview-block";
 
     private RenderFragment RenderMetadata(FileMetadata? metadata, Action clearFile) => builder =>
     {
@@ -586,6 +721,21 @@
         DiffCategory.Metadata => "名前定義",
         _ => category.ToString()
     };
+
+    private static string MacroModuleName(DiffRecord record)
+    {
+        if (record.Category != DiffCategory.Macro)
+        {
+            return string.Empty;
+        }
+
+        const string lineDiffSuffix = " 行差分";
+        return record.Item.EndsWith(lineDiffSuffix, StringComparison.Ordinal)
+            ? record.Item[..^lineDiffSuffix.Length]
+            : record.Item is "マクロ比較" or "マクロ有無" or "VBA保護"
+                ? string.Empty
+                : record.Item;
+    }
 
     private static string KindLabel(DiffKind kind) => kind switch
     {

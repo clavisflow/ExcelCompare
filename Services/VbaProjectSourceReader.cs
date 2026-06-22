@@ -5,6 +5,11 @@ namespace ExcelCompare.Services;
 
 internal static class VbaProjectSourceReader
 {
+    static VbaProjectSourceReader()
+    {
+        Encoding.RegisterProvider(CodePagesEncodingProvider.Instance);
+    }
+
     public static VbaProjectSource Read(byte[] vbaProjectBytes)
     {
         var compoundFile = OleCompoundFile.Open(vbaProjectBytes);
