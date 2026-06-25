@@ -84,9 +84,26 @@
                 "_framework/blazor.webassembly.js"
             ];
 
+            const resolveAsset = src => {
+                const specifier = src.startsWith("./") ? src : `./${src}`;
+                for (const mapElement of document.querySelectorAll('script[type="importmap"]')) {
+                    try {
+                        const imports = JSON.parse(mapElement.textContent || "{}").imports || {};
+                        const mapped = imports[specifier] || imports[src];
+                        if (mapped) {
+                            return new URL(mapped, document.baseURI).href;
+                        }
+                    } catch {
+                        // Ignore malformed or empty import maps.
+                    }
+                }
+
+                return src;
+            };
+
             const loadScript = src => new Promise((resolve, reject) => {
                 const script = document.createElement("script");
-                script.src = src;
+                script.src = resolveAsset(src);
                 script.onload = resolve;
                 script.onerror = () => reject(new Error(`Failed to load ${src}`));
                 document.body.appendChild(script);
