@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ja">
 
 <head>
     <meta charset="utf-8" />
@@ -22,11 +22,34 @@
 
 <body>
     <div id="app">
-        <svg class="loading-progress">
-            <circle r="40%" cx="50%" cy="50%" />
-            <circle r="40%" cx="50%" cy="50%" />
-        </svg>
-        <div class="loading-progress-text"></div>
+        <main class="diagnostics-shell diff-shell seo-fallback">
+            <div class="workspace-title">
+                <div>
+                    <a class="product-brand" href="https://clavisflow.net/">
+                        <span class="brand-mark" aria-hidden="true"><img src="clavisflow-icon.png" alt=""></span>
+                        <span>ClavisFlow</span>
+                    </a>
+                    <h1>EXCEL差分比較アプリ「エクセルコンペア」</h1>
+                    <p class="lead-copy">
+                        2つのExcelファイルをブラウザ上で比較し、セル値、数式、名前定義、書式、ファイル構造、VBAマクロの差分を確認できます。
+                    </p>
+                </div>
+            </div>
+
+            <section class="seo-panel">
+                <h2>Excelファイルの差分をブラウザだけで確認</h2>
+                <p>
+                    エクセルコンペアは、比較元と比較先の .xlsx / .xlsm ファイルを読み込み、
+                    どこが変わったかを一覧化するExcel差分比較ツールです。
+                </p>
+                <ul>
+                    <li>セル値、数式、名前定義、書式、ファイル構造、VBAマクロの差分を確認できます。</li>
+                    <li>ファイルはサーバーへ送信せず、ブラウザ内で解析します。</li>
+                    <li>比較結果はCSVとして出力できます。</li>
+                </ul>
+                <p class="seo-app-note">通常のブラウザでは、この後に比較アプリ本体が読み込まれます。</p>
+            </section>
+        </main>
     </div>
 
     <div id="blazor-error-ui">
@@ -34,9 +57,51 @@
         <a href="." class="reload">Reload</a>
         <span class="dismiss">🗙</span>
     </div>
-    <script src="_framework/blazor.webassembly#[.{fingerprint}].js"></script>
-    <script src="_content/MudBlazor/MudBlazor.min.js"></script>
-    <script src="download.js"></script>
+    <script>
+        (() => {
+            const search = new URLSearchParams(window.location.search);
+            const userAgent = navigator.userAgent || "";
+            const botPattern = /bot|crawler|spider|crawling|googlebot|bingbot|slurp|duckduckbot|baiduspider|yandex|facebookexternalhit|twitterbot|linkedinbot|discordbot|slackbot|linebot/i;
+            const forceBot = search.get("bot") === "1";
+            const forceApp = search.get("app") === "1";
+
+            if (!forceApp && (forceBot || botPattern.test(userAgent))) {
+                document.documentElement.dataset.renderMode = "bot-static";
+                return;
+            }
+
+            document.documentElement.dataset.renderMode = "blazor";
+            document.getElementById("app").innerHTML = `
+                <svg class="loading-progress">
+                    <circle r="40%" cx="50%" cy="50%" />
+                    <circle r="40%" cx="50%" cy="50%" />
+                </svg>
+                <div class="loading-progress-text"></div>`;
+
+            const scripts = [
+                "_content/MudBlazor/MudBlazor.min.js",
+                "download.js",
+                "_framework/blazor.webassembly.js"
+            ];
+
+            const loadScript = src => new Promise((resolve, reject) => {
+                const script = document.createElement("script");
+                script.src = src;
+                script.onload = resolve;
+                script.onerror = () => reject(new Error(`Failed to load ${src}`));
+                document.body.appendChild(script);
+            });
+
+            scripts.reduce((chain, src) => chain.then(() => loadScript(src)), Promise.resolve())
+                .catch(error => {
+                    console.error(error);
+                    const errorUi = document.getElementById("blazor-error-ui");
+                    if (errorUi) {
+                        errorUi.style.display = "block";
+                    }
+                });
+        })();
+    </script>
 </body>
 
 </html>
