@@ -5,19 +5,18 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>ClavisFlow | エクセルコンペア</title>
-    <meta name="description" content="「どこが変わった？」を一瞬で。EXCELファイルどうしのセル値、数式、名前定義、書式、ファイル構成、VBAマクロの差分を見つけます。" />
+    <meta name="description" content="2つのExcelファイルをブラウザ上で比較し、セル値、数式、名前定義、書式、ファイル構造、VBAマクロの差分を一覧化します。" />
+    <meta name="robots" content="index,follow" />
     <meta property="og:title" content="ClavisFlow | エクセルコンペア">
-    <meta property="og:description"
-          content="「どこが変わった？」を一瞬で。EXCELファイルどうしのセル値、数式、名前定義、書式、ファイル構成、VBAマクロの差分を見つけます。">
+    <meta property="og:description" content="2つのExcelファイルをブラウザ上で比較し、セル値、数式、名前定義、書式、ファイル構造、VBAマクロの差分を確認できます。">
     <meta property="og:type" content="website">
+    <meta property="og:locale" content="ja_JP">
     <meta property="og:url" content="https://excelcompare.clavisflow.net/">
     <link rel="canonical" href="https://excelcompare.clavisflow.net/" />
     <base href="/" />
-    <link rel="preload" id="webassembly" />
     <link href="_content/MudBlazor/MudBlazor.min.css" rel="stylesheet" />
     <link rel="stylesheet" href="css/app.css" />
     <link rel="icon" type="image/png" href="clavisflow-icon.png" />
-    <script type="importmap"></script>
 </head>
 
 <body>
@@ -29,7 +28,7 @@
                         <span class="brand-mark" aria-hidden="true"><img src="clavisflow-icon.png" alt=""></span>
                         <span>ClavisFlow</span>
                     </a>
-                    <h1>EXCEL差分比較アプリ「エクセルコンペア」</h1>
+                    <h1>Excel差分比較アプリ「エクセルコンペア」</h1>
                     <p class="lead-copy">
                         2つのExcelファイルをブラウザ上で比較し、セル値、数式、名前定義、書式、ファイル構造、VBAマクロの差分を確認できます。
                     </p>
@@ -55,13 +54,13 @@
     <div id="blazor-error-ui">
         An unhandled error has occurred.
         <a href="." class="reload">Reload</a>
-        <span class="dismiss">🗙</span>
+        <span class="dismiss">x</span>
     </div>
     <script>
         (() => {
             const search = new URLSearchParams(window.location.search);
             const userAgent = navigator.userAgent || "";
-            const botPattern = /bot|crawler|spider|crawling|googlebot|bingbot|slurp|duckduckbot|baiduspider|yandex|facebookexternalhit|twitterbot|linkedinbot|discordbot|slackbot|linebot/i;
+            const botPattern = /bot|crawler|spider|crawling|googlebot|google-inspectiontool|googleother|adsbot-google|mediapartners-google|bingbot|slurp|duckduckbot|baiduspider|yandex|facebookexternalhit|twitterbot|linkedinbot|discordbot|slackbot|linebot/i;
             const forceBot = search.get("bot") === "1";
             const forceApp = search.get("app") === "1";
 
@@ -71,45 +70,13 @@
             }
 
             document.documentElement.dataset.renderMode = "blazor";
-            document.getElementById("app").innerHTML = `
-                <svg class="loading-progress">
-                    <circle r="40%" cx="50%" cy="50%" />
-                    <circle r="40%" cx="50%" cy="50%" />
-                </svg>
-                <div class="loading-progress-text"></div>`;
-
-            const scripts = [
-                "_content/MudBlazor/MudBlazor.min.js",
-                "download.js",
-                "_framework/blazor.webassembly.js"
-            ];
-
-            const resolveAsset = src => {
-                const specifier = src.startsWith("./") ? src : `./${src}`;
-                for (const mapElement of document.querySelectorAll('script[type="importmap"]')) {
-                    try {
-                        const imports = JSON.parse(mapElement.textContent || "{}").imports || {};
-                        const mapped = imports[specifier] || imports[src];
-                        if (mapped) {
-                            return new URL(mapped, document.baseURI).href;
-                        }
-                    } catch {
-                        // Ignore malformed or empty import maps.
-                    }
-                }
-
-                return src;
-            };
-
-            const loadScript = src => new Promise((resolve, reject) => {
+            new Promise((resolve, reject) => {
                 const script = document.createElement("script");
-                script.src = resolveAsset(src);
+                script.src = "app-loader.js";
                 script.onload = resolve;
-                script.onerror = () => reject(new Error(`Failed to load ${src}`));
+                script.onerror = () => reject(new Error("Failed to load app-loader.js"));
                 document.body.appendChild(script);
-            });
-
-            scripts.reduce((chain, src) => chain.then(() => loadScript(src)), Promise.resolve())
+            })
                 .catch(error => {
                     console.error(error);
                     const errorUi = document.getElementById("blazor-error-ui");
