@@ -196,7 +196,6 @@
                             <TemplateColumn T="DiffRecord" Title="比較先" SortBy="@(row => row.TargetValue)">
                                 <CellTemplate>@RenderValueCell(context.Item, isSource: false)</CellTemplate>
                             </TemplateColumn>
-                            <PropertyColumn T="DiffRecord" TProperty="string" Property="row => row.Detail" Title="詳細" />
                         </Columns>
                         <ChildRowContent>
                             @if (!IsModuleBodyRecord(context.Item))

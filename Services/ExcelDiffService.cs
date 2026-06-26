@@ -262,7 +262,10 @@ public sealed class ExcelDiffService
         var worksheet = worksheetPart.Worksheet
             ?? throw new InvalidOperationException("ワークシートの構造を読み取れませんでした。");
 
-        foreach (var cell in worksheet.Descendants<Cell>())
+        var cells = worksheet.Descendants<Cell>().ToList();
+        var sharedFormulas = BuildSharedFormulaLookup(cells);
+
+        foreach (var cell in cells)
         {
             var address = cell.CellReference?.Value;
             if (string.IsNullOrWhiteSpace(address))
@@ -281,7 +284,7 @@ public sealed class ExcelDiffService
                 row,
                 column,
                 ReadCellValue(cell, sharedStrings),
-                cell.CellFormula?.Text ?? string.Empty,
+                ReadCellFormula(cell, row, column, sharedFormulas),
                 ReadStyle(cell, styleLookup));
 
             if (string.IsNullOrEmpty(snapshot.Value) &&
@@ -356,6 +359,207 @@ public sealed class ExcelDiffService
         }
 
         return cell.CellValue?.Text ?? string.Empty;
+    }
+
+    private sealed record SharedFormula(string Text, uint Row, uint Column);
+
+    private static IReadOnlyDictionary<uint, SharedFormula> BuildSharedFormulaLookup(IEnumerable<Cell> cells)
+    {
+        var sharedFormulas = new Dictionary<uint, SharedFormula>();
+        foreach (var cell in cells)
+        {
+            var formula = cell.CellFormula;
+            if (formula?.SharedIndex?.Value is not { } sharedIndex ||
+                string.IsNullOrEmpty(formula.Text) ||
+                string.IsNullOrWhiteSpace(cell.CellReference?.Value))
+            {
+                continue;
+            }
+
+            var (column, row) = ParseCellReference(cell.CellReference!.Value!);
+            if (row == 0 || column == 0)
+            {
+                continue;
+            }
+
+            sharedFormulas[sharedIndex] = new(formula.Text, row, column);
+        }
+
+        return sharedFormulas;
+    }
+
+    private static string ReadCellFormula(
+        Cell cell,
+        uint row,
+        uint column,
+        IReadOnlyDictionary<uint, SharedFormula> sharedFormulas)
+    {
+        var formula = cell.CellFormula;
+        if (formula is null)
+        {
+            return string.Empty;
+        }
+
+        if (!string.IsNullOrEmpty(formula.Text))
+        {
+            return formula.Text;
+        }
+
+        if (formula.SharedIndex?.Value is not { } sharedIndex ||
+            !sharedFormulas.TryGetValue(sharedIndex, out var sharedFormula))
+        {
+            return string.Empty;
+        }
+
+        var rowOffset = (int)row - (int)sharedFormula.Row;
+        var columnOffset = (int)column - (int)sharedFormula.Column;
+        return ShiftFormulaReferences(sharedFormula.Text, rowOffset, columnOffset);
+    }
+
+    private static string ShiftFormulaReferences(string formula, int rowOffset, int columnOffset)
+    {
+        if (rowOffset == 0 && columnOffset == 0)
+        {
+            return formula;
+        }
+
+        var builder = new StringBuilder(formula.Length);
+        var inString = false;
+        for (var index = 0; index < formula.Length;)
+        {
+            var current = formula[index];
+            if (current == '"')
+            {
+                builder.Append(current);
+                index++;
+                if (index < formula.Length && formula[index] == '"')
+                {
+                    builder.Append(formula[index]);
+                    index++;
+                    continue;
+                }
+
+                inString = !inString;
+                continue;
+            }
+
+            if (inString || !TryReadCellReference(formula, index, out var length, out var shifted))
+            {
+                builder.Append(current);
+                index++;
+                continue;
+            }
+
+            builder.Append(ShiftCellReference(shifted, rowOffset, columnOffset));
+            index += length;
+        }
+
+        return builder.ToString();
+    }
+
+    private readonly record struct FormulaCellReference(
+        string Column,
+        uint Row,
+        bool AbsoluteColumn,
+        bool AbsoluteRow);
+
+    private static bool TryReadCellReference(
+        string text,
+        int start,
+        out int length,
+        out FormulaCellReference reference)
+    {
+        length = 0;
+        reference = default;
+
+        var index = start;
+        var absoluteColumn = index < text.Length && text[index] == '$';
+        if (absoluteColumn)
+        {
+            index++;
+        }
+
+        var columnStart = index;
+        while (index < text.Length && char.IsAsciiLetter(text[index]) && index - columnStart < 3)
+        {
+            index++;
+        }
+
+        if (index == columnStart)
+        {
+            return false;
+        }
+
+        var column = text[columnStart..index].ToUpperInvariant();
+        if (!IsValidFormulaColumn(column))
+        {
+            return false;
+        }
+
+        var absoluteRow = index < text.Length && text[index] == '$';
+        if (absoluteRow)
+        {
+            index++;
+        }
+
+        var rowStart = index;
+        while (index < text.Length && char.IsAsciiDigit(text[index]))
+        {
+            index++;
+        }
+
+        if (index == rowStart ||
+            !uint.TryParse(text[rowStart..index], NumberStyles.Integer, CultureInfo.InvariantCulture, out var row) ||
+            row == 0)
+        {
+            return false;
+        }
+
+        if ((start > 0 && IsFormulaReferenceCharacter(text[start - 1])) ||
+            (index < text.Length && IsFormulaReferenceCharacter(text[index])))
+        {
+            return false;
+        }
+
+        length = index - start;
+        reference = new(column, row, absoluteColumn, absoluteRow);
+        return true;
+    }
+
+    private static string ShiftCellReference(FormulaCellReference reference, int rowOffset, int columnOffset)
+    {
+        var columnIndex = ColumnIndex(reference.Column);
+        if (!reference.AbsoluteColumn)
+        {
+            columnIndex = Math.Max(1, columnIndex + columnOffset);
+        }
+
+        var row = reference.AbsoluteRow
+            ? reference.Row
+            : (uint)Math.Max(1, (int)reference.Row + rowOffset);
+
+        return string.Concat(
+            reference.AbsoluteColumn ? "$" : string.Empty,
+            ColumnName((uint)columnIndex),
+            reference.AbsoluteRow ? "$" : string.Empty,
+            row.ToString(CultureInfo.InvariantCulture));
+    }
+
+    private static bool IsFormulaReferenceCharacter(char character) =>
+        char.IsAsciiLetterOrDigit(character) || character is '_' or '.' or '$';
+
+    private static bool IsValidFormulaColumn(string column) =>
+        ColumnIndex(column) <= 16_384;
+
+    private static int ColumnIndex(string column)
+    {
+        var value = 0;
+        foreach (var character in column)
+        {
+            value = value * 26 + char.ToUpperInvariant(character) - 'A' + 1;
+        }
+
+        return value;
     }
 
     private static IReadOnlyDictionary<uint, string> BuildStyleLookup(WorkbookPart workbookPart)
