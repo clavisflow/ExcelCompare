@@ -25,39 +25,31 @@
 
         <MudGrid Spacing="3">
             <MudItem xs="12" md="6">
-                <MudFileUpload T="IBrowserFile" Files="_sourceFile" Accept=".xlsx,.xlsm" MaxFileSize="@ExcelDiffService.MaxFileSize" FilesChanged="OnSourceFileChanged">
-                    <CustomContent Context="picker">
-                        <MudPaper Class="upload-zone clickable-upload" Elevation="0" @onclick="@picker.OpenFilePickerAsync" role="button" tabindex="0">
-                            <div class="upload-heading">
-                                <span class="upload-icon">A</span>
-                                <div>
-                                    <MudText Typo="Typo.h6">比較元ファイルを選択またはドロップ</MudText>
-                                    <MudText Typo="Typo.body2">.xlsx .xlsm 対応。最大 10MB。</MudText>
-                                </div>
-                            </div>
-                            @RenderMetadata(_sourceMetadata, ClearSourceFile)
-                        </MudPaper>
-                    </CustomContent>
-                    <SelectedTemplate></SelectedTemplate>
-                </MudFileUpload>
+                <MudPaper Class="upload-zone clickable-upload" Elevation="0" role="button" tabindex="0">
+                    <InputFile @key="_sourceInputKey" class="upload-input" accept=".xlsx,.xlsm" OnChange="OnSourceInputChanged" />
+                    <div class="upload-heading">
+                        <span class="upload-icon">A</span>
+                        <div>
+                            <MudText Typo="Typo.h6">比較元ファイルを選択またはドロップ</MudText>
+                            <MudText Typo="Typo.body2">.xlsx .xlsm 対応。最大 10MB。</MudText>
+                        </div>
+                    </div>
+                    @RenderMetadata(_sourceMetadata, ClearSourceFile)
+                </MudPaper>
             </MudItem>
 
             <MudItem xs="12" md="6">
-                <MudFileUpload T="IBrowserFile" Files="_targetFile" Accept=".xlsx,.xlsm" MaxFileSize="@ExcelDiffService.MaxFileSize" FilesChanged="OnTargetFileChanged">
-                    <CustomContent Context="picker">
-                        <MudPaper Class="upload-zone clickable-upload" Elevation="0" @onclick="@picker.OpenFilePickerAsync" role="button" tabindex="0">
-                            <div class="upload-heading">
-                                <span class="upload-icon">B</span>
-                                <div>
-                                    <MudText Typo="Typo.h6">比較先ファイルを選択またはドロップ</MudText>
-                                    <MudText Typo="Typo.body2">.xlsx .xlsm 対応。最大 10MB。</MudText>
-                                </div>
-                            </div>
-                            @RenderMetadata(_targetMetadata, ClearTargetFile)
-                        </MudPaper>
-                    </CustomContent>
-                    <SelectedTemplate></SelectedTemplate>
-                </MudFileUpload>
+                <MudPaper Class="upload-zone clickable-upload" Elevation="0" role="button" tabindex="0">
+                    <InputFile @key="_targetInputKey" class="upload-input" accept=".xlsx,.xlsm" OnChange="OnTargetInputChanged" />
+                    <div class="upload-heading">
+                        <span class="upload-icon">B</span>
+                        <div>
+                            <MudText Typo="Typo.h6">比較先ファイルを選択またはドロップ</MudText>
+                            <MudText Typo="Typo.body2">.xlsx .xlsm 対応。最大 10MB。</MudText>
+                        </div>
+                    </div>
+                    @RenderMetadata(_targetMetadata, ClearTargetFile)
+                </MudPaper>
             </MudItem>
         </MudGrid>
 
@@ -256,6 +248,8 @@
     private bool _isRunning;
     private int _progressPercent;
     private int _activeTab;
+    private int _sourceInputKey;
+    private int _targetInputKey;
     private string _progressStatus = string.Empty;
     private string _sheetFilter = AllFilter;
     private string _kindFilter = AllFilter;
@@ -293,11 +287,18 @@
         _targetMetadata = await TryReadMetadataAsync(file);
     }
 
+    private Task OnSourceInputChanged(InputFileChangeEventArgs args) =>
+        OnSourceFileChanged(args.File);
+
+    private Task OnTargetInputChanged(InputFileChangeEventArgs args) =>
+        OnTargetFileChanged(args.File);
+
     private void ClearSourceFile()
     {
         _sourceFile = null;
         _sourceMetadata = null;
         _result = null;
+        _sourceInputKey++;
     }
 
     private void ClearTargetFile()
@@ -305,6 +306,7 @@
         _targetFile = null;
         _targetMetadata = null;
         _result = null;
+        _targetInputKey++;
     }
 
     private void SelectSummaryTab(int tabIndex)
@@ -363,8 +365,9 @@
         {
             Snackbar.Add(ex.Message, Severity.Error);
         }
-        catch
+        catch (Exception ex)
         {
+            Console.Error.WriteLine($"Metadata parse failed: {file.Name} ({file.Size} bytes) {ex}");
             Snackbar.Add("ファイルの解析に失敗しました。ファイルが破損しているか、サイズが大きすぎる可能性があります。", Severity.Error);
         }
 
@@ -412,8 +415,9 @@
         {
             Snackbar.Add(ex.Message, Severity.Error);
         }
-        catch
+        catch (Exception ex)
         {
+            Console.Error.WriteLine($"Compare failed: source={_sourceFile.Name} ({_sourceFile.Size} bytes), target={_targetFile.Name} ({_targetFile.Size} bytes) {ex}");
             Snackbar.Add("ファイルの解析に失敗しました。ファイルが破損しているか、サイズが大きすぎる可能性があります。", Severity.Error);
         }
         finally

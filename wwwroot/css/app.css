@@ -150,6 +150,7 @@ h1:focus {
 }
 
 .upload-zone {
+    position: relative;
     display: grid;
     min-height: 210px;
     padding: 22px;
@@ -159,6 +160,16 @@ h1:focus {
 }
 
 .clickable-upload {
+    cursor: pointer;
+}
+
+.upload-input {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
     cursor: pointer;
 }
 
@@ -175,6 +186,8 @@ h1:focus {
 }
 
 .upload-heading {
+    position: relative;
+    z-index: 0;
     display: flex;
     align-items: center;
     gap: 14px;
@@ -207,6 +220,8 @@ h1:focus {
 }
 
 .file-meta {
+    position: relative;
+    z-index: 2;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -215,6 +230,7 @@ h1:focus {
     padding-top: 12px;
     color: #111827;
     overflow-wrap: anywhere;
+    pointer-events: none;
 }
 
 .file-meta-main {
@@ -229,6 +245,10 @@ h1:focus {
     font-weight: 800;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.file-meta .mud-icon-button {
+    pointer-events: auto;
 }
 
 .file-meta span {
