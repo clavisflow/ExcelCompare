@@ -325,6 +325,7 @@ public sealed class ExcelDiffService
 
         return new SheetSnapshot(
             sheet.Name?.Value ?? "(名称なし)",
+            sheet.SheetId?.Value ?? 0,
             position,
             sheet.State?.Value.ToString() ?? "Visible",
             cellsByAddress,
@@ -723,137 +724,7 @@ public sealed class ExcelDiffService
             CompareStringSets(records, name, "非表示行", left.HiddenRows, right.HiddenRows);
             CompareStringSets(records, name, "非表示列", left.HiddenColumns, right.HiddenColumns);
             CompareStringSets(records, name, "入力規則", left.DataValidations, right.DataValidations);
-            CompareColumnStructure(records, name, left, right);
         }
-    }
-
-    private static void CompareColumnStructure(
-        ICollection<DiffRecord> records,
-        string sheetName,
-        SheetSnapshot source,
-        SheetSnapshot target)
-    {
-        var matchedTargets = new HashSet<uint>();
-        var removedColumns = new List<uint>();
-        foreach (var sourceColumn in source.ColumnSignatures.Keys.Order())
-        {
-            var sourceSignature = source.ColumnSignatures[sourceColumn];
-            if (string.IsNullOrEmpty(sourceSignature))
-            {
-                continue;
-            }
-
-            var sameColumn = target.ColumnSignatures.TryGetValue(sourceColumn, out var targetSignature) &&
-                sourceSignature.Equals(targetSignature, StringComparison.Ordinal);
-            if (sameColumn)
-            {
-                matchedTargets.Add(sourceColumn);
-                continue;
-            }
-
-            var movedTarget = target.ColumnSignatures
-                .Where(pair => !matchedTargets.Contains(pair.Key) && pair.Value.Equals(sourceSignature, StringComparison.Ordinal))
-                .Select(pair => (uint?)pair.Key)
-                .FirstOrDefault();
-
-            if (movedTarget is { } targetColumn)
-            {
-                matchedTargets.Add(targetColumn);
-                records.Add(new(
-                    DiffCategory.Structure,
-                    DiffKind.Changed,
-                    sheetName,
-                    $"{ColumnName(sourceColumn)} -> {ColumnName(targetColumn)}",
-                    "列位置",
-                    ColumnName(sourceColumn),
-                    ColumnName(targetColumn),
-                    "同じ内容の列が別位置へ移動しました。セル比較ではこの列ズレを補正しています。"));
-            }
-            else if (!target.ColumnSignatures.Values.Contains(sourceSignature, StringComparer.Ordinal))
-            {
-                removedColumns.Add(sourceColumn);
-            }
-        }
-
-        var addedColumns = new List<uint>();
-        foreach (var targetColumn in target.ColumnSignatures.Keys.Order())
-        {
-            if (matchedTargets.Contains(targetColumn))
-            {
-                continue;
-            }
-
-            var signature = target.ColumnSignatures[targetColumn];
-            if (!string.IsNullOrEmpty(signature) && !source.ColumnSignatures.Values.Contains(signature, StringComparer.Ordinal))
-            {
-                addedColumns.Add(targetColumn);
-            }
-        }
-
-        AddColumnSummary(records, DiffKind.Removed, sheetName, removedColumns);
-        AddColumnSummary(records, DiffKind.Added, sheetName, addedColumns);
-    }
-
-    private static void AddColumnSummary(ICollection<DiffRecord> records, DiffKind kind, string sheetName, IReadOnlyList<uint> columns)
-    {
-        if (columns.Count == 0)
-        {
-            return;
-        }
-
-        if (columns.Count <= 12)
-        {
-            foreach (var column in columns)
-            {
-                records.Add(new(
-                    DiffCategory.Structure,
-                    kind,
-                    sheetName,
-                    ColumnName(column),
-                    "列",
-                    kind == DiffKind.Removed ? ColumnName(column) : string.Empty,
-                    kind == DiffKind.Added ? ColumnName(column) : string.Empty,
-                    kind == DiffKind.Added ? "比較先で列内容が追加された可能性があります。" : "比較先で列内容が削除された可能性があります。"));
-            }
-
-            return;
-        }
-
-        var ranges = FormatColumnRanges(columns);
-        records.Add(new(
-            DiffCategory.Structure,
-            kind,
-            sheetName,
-            ranges,
-            "列ブロック",
-            kind == DiffKind.Removed ? ranges : string.Empty,
-            kind == DiffKind.Added ? ranges : string.Empty,
-            kind == DiffKind.Added
-                ? $"{columns.Count:N0}列の追加候補をまとめて表示しています。"
-                : $"{columns.Count:N0}列の削除候補をまとめて表示しています。"));
-    }
-
-    private static string FormatColumnRanges(IReadOnlyList<uint> columns)
-    {
-        var ordered = columns.Order().ToList();
-        var ranges = new List<string>();
-        var start = ordered[0];
-        var previous = start;
-
-        foreach (var column in ordered.Skip(1))
-        {
-            if (column == previous + 1)
-            {
-                previous = column;
-                continue;
-            }
-
-            ranges.Add(start == previous ? ColumnName(start) : $"{ColumnName(start)}:{ColumnName(previous)}");
-            start = previous = column;
-        }
-
-        ranges.Add(start == previous ? ColumnName(start) : $"{ColumnName(start)}:{ColumnName(previous)}");
-        return string.Join(", ", ranges);
     }
 
     private static void CompareSheets(
@@ -862,27 +733,30 @@ public sealed class ExcelDiffService
         ComparisonOptions options,
         ICollection<DiffRecord> records)
     {
+        var sourceNames = source.SheetsByName.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var targetNames = target.SheetsByName.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
+        var removed = sourceNames.Except(targetNames, StringComparer.OrdinalIgnoreCase).ToList();
+        var added = targetNames.Except(sourceNames, StringComparer.OrdinalIgnoreCase).ToList();
+        var renamePairs = MatchRenamedSheets(source, target, removed, added);
+        var renamedSheets = renamePairs.ToDictionary(pair => pair.Source, pair => pair.Target, StringComparer.OrdinalIgnoreCase);
+        var inverseRenamedSheets = InvertMap(renamedSheets);
         var comparedTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var sheetName in source.SheetsByName.Keys.Intersect(target.SheetsByName.Keys, StringComparer.OrdinalIgnoreCase))
         {
             var left = source.SheetsByName[sheetName];
             var right = target.SheetsByName[sheetName];
-            CompareSheetCells(left, right, options, records);
+            CompareSheetCells(left, right, options, records, renamedSheets, inverseRenamedSheets);
             comparedTargets.Add(right.Name);
         }
 
-        var sourceNames = source.SheetsByName.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var targetNames = target.SheetsByName.Keys.ToHashSet(StringComparer.OrdinalIgnoreCase);
-        var removed = sourceNames.Except(targetNames, StringComparer.OrdinalIgnoreCase).ToList();
-        var added = targetNames.Except(sourceNames, StringComparer.OrdinalIgnoreCase).ToList();
-        foreach (var (sourceName, targetName) in MatchRenamedSheets(source, target, removed, added))
+        foreach (var (sourceName, targetName) in renamePairs)
         {
             if (!comparedTargets.Add(targetName))
             {
                 continue;
             }
 
-            CompareSheetCells(source.SheetsByName[sourceName], target.SheetsByName[targetName], options, records);
+            CompareSheetCells(source.SheetsByName[sourceName], target.SheetsByName[targetName], options, records, renamedSheets, inverseRenamedSheets);
         }
     }
 
@@ -890,7 +764,9 @@ public sealed class ExcelDiffService
         SheetSnapshot source,
         SheetSnapshot target,
         ComparisonOptions options,
-        ICollection<DiffRecord> records)
+        ICollection<DiffRecord> records,
+        IReadOnlyDictionary<string, string> renamedSheets,
+        IReadOnlyDictionary<string, string> inverseRenamedSheets)
     {
         var leftRows = source.CellsByRow.Keys.Order().ToList();
         var rightRows = target.CellsByRow.Keys.Order().ToList();
@@ -918,7 +794,7 @@ public sealed class ExcelDiffService
 
             if (leftSignature == rightSignature)
             {
-                CompareAlignedRows(source, target, leftRow, rightRow, options, records);
+                CompareAlignedRows(source, target, leftRow, rightRow, options, records, renamedSheets, inverseRenamedSheets);
                 i++;
                 j++;
                 continue;
@@ -940,7 +816,7 @@ public sealed class ExcelDiffService
                 continue;
             }
 
-            CompareAlignedRows(source, target, leftRow, rightRow, options, records);
+            CompareAlignedRows(source, target, leftRow, rightRow, options, records, renamedSheets, inverseRenamedSheets);
             i++;
             j++;
         }
@@ -952,7 +828,9 @@ public sealed class ExcelDiffService
         uint sourceRow,
         uint targetRow,
         ComparisonOptions options,
-        ICollection<DiffRecord> records)
+        ICollection<DiffRecord> records,
+        IReadOnlyDictionary<string, string> renamedSheets,
+        IReadOnlyDictionary<string, string> inverseRenamedSheets)
     {
         var leftCells = source.CellsByRow[sourceRow].Values.OrderBy(cell => cell.Column).ToList();
         var rightCells = target.CellsByRow[targetRow].Values.OrderBy(cell => cell.Column).ToList();
@@ -975,15 +853,15 @@ public sealed class ExcelDiffService
 
             var left = leftCells[i];
             var right = rightCells[j];
-            if (SameCellIdentity(left, right))
+            if (SameCellIdentity(left, right, renamedSheets))
             {
-                CompareAlignedCells(target.Name, left, right, options, records);
+                CompareAlignedCells(target.Name, left, right, options, records, renamedSheets);
                 i++;
                 j++;
                 continue;
             }
 
-            var targetMatch = FindMatchingCell(left, rightCells, j + 1);
+            var targetMatch = FindMatchingCell(left, rightCells, j + 1, renamedSheets);
             if (targetMatch >= 0)
             {
                 AddCellBlock(records, DiffKind.Added, target.Name, rightCells.Skip(j).Take(targetMatch - j), target: true, options);
@@ -991,7 +869,7 @@ public sealed class ExcelDiffService
                 continue;
             }
 
-            var sourceMatch = FindMatchingCell(right, leftCells, i + 1);
+            var sourceMatch = FindMatchingCell(right, leftCells, i + 1, inverseRenamedSheets);
             if (sourceMatch >= 0)
             {
                 AddCellBlock(records, DiffKind.Removed, source.Name, leftCells.Skip(i).Take(sourceMatch - i), target: false, options);
@@ -999,7 +877,7 @@ public sealed class ExcelDiffService
                 continue;
             }
 
-            CompareAlignedCells(target.Name, left, right, options, records);
+            CompareAlignedCells(target.Name, left, right, options, records, renamedSheets);
             i++;
             j++;
         }
@@ -1010,13 +888,14 @@ public sealed class ExcelDiffService
         CellSnapshot left,
         CellSnapshot right,
         ComparisonOptions options,
-        ICollection<DiffRecord> records)
+        ICollection<DiffRecord> records,
+        IReadOnlyDictionary<string, string> renamedSheets)
     {
         var address = right.Address;
         if (options.IncludeData)
         {
             AddCellChange(records, sheetName, address, "値", left.Value, right.Value);
-            AddCellChange(records, sheetName, address, "数式", left.Formula, right.Formula);
+            AddFormulaChange(records, sheetName, address, left.Formula, right.Formula, renamedSheets);
         }
 
         if (options.IncludeFormatting)
@@ -1025,22 +904,32 @@ public sealed class ExcelDiffService
         }
     }
 
-    private static bool SameCellIdentity(CellSnapshot left, CellSnapshot right)
+    private static bool SameCellIdentity(
+        CellSnapshot left,
+        CellSnapshot right,
+        IReadOnlyDictionary<string, string> renamedSheets)
     {
         if (!string.IsNullOrEmpty(left.DataSignature) || !string.IsNullOrEmpty(right.DataSignature))
         {
-            return string.Equals(left.DataSignature, right.DataSignature, StringComparison.Ordinal);
+            return string.Equals(
+                NormalizeCellDataSignature(left, renamedSheets),
+                right.DataSignature,
+                StringComparison.Ordinal);
         }
 
         return string.Equals(left.StyleSignature, right.StyleSignature, StringComparison.Ordinal);
     }
 
-    private static int FindMatchingCell(CellSnapshot needle, IReadOnlyList<CellSnapshot> cells, int startIndex)
+    private static int FindMatchingCell(
+        CellSnapshot needle,
+        IReadOnlyList<CellSnapshot> cells,
+        int startIndex,
+        IReadOnlyDictionary<string, string> renamedSheets)
     {
         var max = Math.Min(cells.Count, startIndex + ShiftLookAheadFor(cells.Count));
         for (var index = startIndex; index < max; index++)
         {
-            if (SameCellIdentity(needle, cells[index]))
+            if (SameCellIdentity(needle, cells[index], renamedSheets))
             {
                 return index;
             }
@@ -1258,6 +1147,126 @@ public sealed class ExcelDiffService
         }
     }
 
+    private static void AddFormulaChange(
+        ICollection<DiffRecord> records,
+        string sheet,
+        string address,
+        string source,
+        string target,
+        IReadOnlyDictionary<string, string> renamedSheets)
+    {
+        var normalizedSource = NormalizeFormulaSheetReferences(source, renamedSheets);
+        if (!string.Equals(normalizedSource, target, StringComparison.Ordinal))
+        {
+            records.Add(new(DiffCategory.Cell, DiffKind.Changed, sheet, address, "数式", source, target, "数式が変更されました。"));
+        }
+    }
+
+    private static string NormalizeCellDataSignature(CellSnapshot cell, IReadOnlyDictionary<string, string> renamedSheets) =>
+        string.IsNullOrEmpty(cell.Formula)
+            ? cell.DataSignature
+            : $"={NormalizeFormulaSheetReferences(cell.Formula, renamedSheets)}";
+
+    private static IReadOnlyDictionary<string, string> InvertMap(IReadOnlyDictionary<string, string> values) =>
+        values.Count == 0
+            ? values
+            : values.ToDictionary(pair => pair.Value, pair => pair.Key, StringComparer.OrdinalIgnoreCase);
+
+    private static string NormalizeFormulaSheetReferences(string formula, IReadOnlyDictionary<string, string> renamedSheets)
+    {
+        if (string.IsNullOrEmpty(formula) || renamedSheets.Count == 0 || !formula.Contains('!', StringComparison.Ordinal))
+        {
+            return formula;
+        }
+
+        var builder = new StringBuilder(formula.Length);
+        var inString = false;
+        for (var index = 0; index < formula.Length;)
+        {
+            var current = formula[index];
+            if (current == '"')
+            {
+                builder.Append(current);
+                index++;
+                if (index < formula.Length && formula[index] == '"')
+                {
+                    builder.Append(formula[index]);
+                    index++;
+                    continue;
+                }
+
+                inString = !inString;
+                continue;
+            }
+
+            if (!inString && TryReadSheetReference(formula, index, renamedSheets, out var length, out var replacement))
+            {
+                builder.Append(replacement);
+                index += length;
+                continue;
+            }
+
+            builder.Append(current);
+            index++;
+        }
+
+        return builder.ToString();
+    }
+
+    private static bool TryReadSheetReference(
+        string formula,
+        int start,
+        IReadOnlyDictionary<string, string> renamedSheets,
+        out int length,
+        out string replacement)
+    {
+        length = 0;
+        replacement = string.Empty;
+
+        foreach (var (sourceName, targetName) in renamedSheets.OrderByDescending(pair => pair.Key.Length))
+        {
+            var quotedSource = QuoteSheetName(sourceName);
+            if (MatchesSheetReference(formula, start, quotedSource))
+            {
+                length = quotedSource.Length + 1;
+                replacement = $"{QuoteSheetName(targetName)}!";
+                return true;
+            }
+
+            if (NeedsQuotedSheetName(sourceName))
+            {
+                continue;
+            }
+
+            if (MatchesSheetReference(formula, start, sourceName))
+            {
+                length = sourceName.Length + 1;
+                replacement = $"{(NeedsQuotedSheetName(targetName) ? QuoteSheetName(targetName) : targetName)}!";
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    private static bool MatchesSheetReference(string formula, int start, string sheetName)
+    {
+        if (start + sheetName.Length >= formula.Length ||
+            !formula.AsSpan(start, sheetName.Length).Equals(sheetName, StringComparison.OrdinalIgnoreCase) ||
+            formula[start + sheetName.Length] != '!')
+        {
+            return false;
+        }
+
+        return start == 0 || !IsFormulaReferenceCharacter(formula[start - 1]);
+    }
+
+    private static string QuoteSheetName(string sheetName) =>
+        $"'{sheetName.Replace("'", "''", StringComparison.Ordinal)}'";
+
+    private static bool NeedsQuotedSheetName(string sheetName) =>
+        sheetName.Any(character => !char.IsAsciiLetterOrDigit(character) && character != '_');
+
     private static void AddFormattingChange(ICollection<DiffRecord> records, string sheet, string address, string source, string target)
     {
         if (!string.Equals(source, target, StringComparison.Ordinal))
@@ -1368,26 +1377,80 @@ public sealed class ExcelDiffService
         IReadOnlyList<string> added)
     {
         var pairs = new List<(string Source, string Target)>();
+        var usedSources = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         var usedTargets = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         foreach (var oldName in removed)
         {
             var left = source.SheetsByName[oldName];
+            var sameSheetIdTarget = added
+                .Where(name => !usedTargets.Contains(name))
+                .Select(name => target.SheetsByName[name])
+                .FirstOrDefault(sheet => sheet.SheetId != 0 && sheet.SheetId == left.SheetId);
+
+            if (sameSheetIdTarget is null)
+            {
+                continue;
+            }
+
+            pairs.Add((oldName, sameSheetIdTarget.Name));
+            usedSources.Add(oldName);
+            usedTargets.Add(sameSheetIdTarget.Name);
+        }
+
+        foreach (var oldName in removed)
+        {
+            if (usedSources.Contains(oldName))
+            {
+                continue;
+            }
+
+            var left = source.SheetsByName[oldName];
+            var samePositionTarget = added
+                .Where(name => !usedTargets.Contains(name))
+                .Select(name => target.SheetsByName[name])
+                .FirstOrDefault(sheet => sheet.Position == left.Position);
+
+            if (samePositionTarget is null)
+            {
+                continue;
+            }
+
+            pairs.Add((oldName, samePositionTarget.Name));
+            usedSources.Add(oldName);
+            usedTargets.Add(samePositionTarget.Name);
+        }
+
+        foreach (var oldName in removed)
+        {
+            if (usedSources.Contains(oldName))
+            {
+                continue;
+            }
+
+            var left = source.SheetsByName[oldName];
             var bestScore = 0.0;
+            var secondBestScore = 0.0;
             string? bestName = null;
             foreach (var newName in added.Where(name => !usedTargets.Contains(name)))
             {
                 var score = SheetSimilarity(left, target.SheetsByName[newName]);
                 if (score > bestScore)
                 {
+                    secondBestScore = bestScore;
                     bestScore = score;
                     bestName = newName;
                 }
+                else if (score > secondBestScore)
+                {
+                    secondBestScore = score;
+                }
             }
 
-            if (bestName is not null && bestScore >= 0.7)
+            if (bestName is not null && bestScore >= 0.9 && bestScore - secondBestScore >= 0.15)
             {
                 pairs.Add((oldName, bestName));
+                usedSources.Add(oldName);
                 usedTargets.Add(bestName);
             }
         }
@@ -1401,7 +1464,7 @@ public sealed class ExcelDiffService
         var rightSet = right.RowSignatures.Values.Where(value => value.Length > 0).Take(200).ToHashSet(StringComparer.Ordinal);
         if (leftSet.Count == 0 && rightSet.Count == 0)
         {
-            return 1;
+            return 0;
         }
 
         var intersection = leftSet.Intersect(rightSet, StringComparer.Ordinal).Count();

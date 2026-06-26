@@ -75,6 +75,7 @@ internal sealed record WorkbookSnapshot(
 
 internal sealed record SheetSnapshot(
     string Name,
+    uint SheetId,
     int Position,
     string State,
     IReadOnlyDictionary<string, CellSnapshot> CellsByAddress,
